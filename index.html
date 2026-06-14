@@ -198,10 +198,98 @@
   const scene = new THREE.Scene();
 
   const camera = new THREE.PerspectiveCamera(
-    52, window.innerWidth / window.innerHeight, 0.1, 4000
+    52, window.innerWidth / window.innerHeight, 0.1, 8000   // Far 裁剪面调大，覆盖全景
   );
-  camera.position.set(0, 340, 560);
-  camera.lookAt(0, -40, 0);
+  // 上帝视角：悬浮盆地斜上方高空俯瞰全景（y/z 约放大 3 倍）
+  camera.position.set(0, 1000, 1700);
+  camera.lookAt(0, 0, 0);
+
+  // ---------------------------------------------------------------------
+  // 内联自包含 OrbitControls（不依赖任何外部文件，避免跨域）
+  // 支持：左键拖拽 360° 环绕 · 滚轮缩放 · 自动阻尼
+  // target 锁定盆地中心 (0,0,0)，永远以全景为核心环绕，无穿模
+  // ---------------------------------------------------------------------
+  function MiniOrbitControls(cam, dom) {
+    this.target = new THREE.Vector3(0, 0, 0);
+    this.minDistance = 600;
+    this.maxDistance = 4500;
+    this.minPolar = 0.15;                 // 防止从正上方/正下方穿模
+    this.maxPolar = Math.PI * 0.49;
+    this.damping = 0.08;
+    this.rotateSpeed = 0.9;
+    this.zoomSpeed = 1.0;
+    this.autoRotate = true;               // 默认缓慢自转，宏观环绕
+    this.autoRotateSpeed = 0.18;          // 弧度/秒
+
+    const offset = new THREE.Vector3();
+    const spherical = new THREE.Spherical();
+    const sphericalDelta = new THREE.Spherical(0, 0, 0);
+    let scale = 1;
+    let isDragging = false;
+    let px = 0, py = 0;
+    let lastUserInteract = 0;
+
+    // 初始化球坐标
+    offset.copy(cam.position).sub(this.target);
+    spherical.setFromVector3(offset);
+
+    const self = this;
+
+    function onDown(e) {
+      if (e.button !== 0) return;
+      isDragging = true;
+      px = e.clientX; py = e.clientY;
+      lastUserInteract = performance.now();
+    }
+    function onMove(e) {
+      if (!isDragging) return;
+      const dx = e.clientX - px;
+      const dy = e.clientY - py;
+      px = e.clientX; py = e.clientY;
+      sphericalDelta.theta -= (2 * Math.PI * dx / dom.clientHeight) * self.rotateSpeed;
+      sphericalDelta.phi   -= (2 * Math.PI * dy / dom.clientHeight) * self.rotateSpeed;
+      lastUserInteract = performance.now();
+    }
+    function onUp() { isDragging = false; }
+    function onWheel(e) {
+      e.preventDefault();
+      const f = Math.pow(0.95, self.zoomSpeed);
+      if (e.deltaY < 0) scale *= f; else scale /= f;
+      lastUserInteract = performance.now();
+    }
+
+    dom.addEventListener('mousedown', onDown);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    dom.addEventListener('wheel', onWheel, { passive: false });
+
+    this.update = function (dt) {
+      // 闲置 2.5s 后恢复自动环绕
+      if (this.autoRotate && (performance.now() - lastUserInteract > 2500) && !isDragging) {
+        sphericalDelta.theta -= this.autoRotateSpeed * dt;
+      }
+
+      spherical.theta += sphericalDelta.theta;
+      spherical.phi   += sphericalDelta.phi;
+      spherical.phi    = Math.max(this.minPolar, Math.min(this.maxPolar, spherical.phi));
+      spherical.makeSafe();
+
+      spherical.radius *= scale;
+      spherical.radius = Math.max(this.minDistance, Math.min(this.maxDistance, spherical.radius));
+
+      offset.setFromSpherical(spherical);
+      cam.position.copy(this.target).add(offset);
+      cam.lookAt(this.target);
+
+      // 阻尼衰减
+      sphericalDelta.theta *= (1 - this.damping);
+      sphericalDelta.phi   *= (1 - this.damping);
+      scale = 1;
+    };
+  }
+
+  const controls = new MiniOrbitControls(camera, renderer.domElement);
+  controls.target.set(0, 0, 0);   // 盆地中心为环绕核心
 
   // 半透明黑遮罩场景（用于绘制运动模糊残影衰减层）
   const fadeScene = new THREE.Scene();
@@ -614,7 +702,6 @@
   // ---------------------------------------------------------------------
   const clock = new THREE.Clock();
   let curMorph = 0, curBurst = 0, curMouseStr = 0;
-  let camAngle = 0;
 
   function animate() {
     requestAnimationFrame(animate);
@@ -645,13 +732,8 @@
     material.uniforms.uMouseStr.value = curMouseStr;
     material.uniforms.uMouse.value.copy(mouseWorld);
 
-    // --- 缓慢环绕镜头，增强 3D 数字孪生空间感 ---
-    camAngle += dt * 0.05;
-    const radius = 600;
-    camera.position.x = Math.sin(camAngle) * radius;
-    camera.position.z = Math.cos(camAngle) * radius;
-    camera.position.y = 340 + Math.sin(t * 0.2) * 30;
-    camera.lookAt(0, -30, 0);
+    // --- 上帝视角 OrbitControls：360° 全息环绕，盆地中心为核心 ---
+    controls.update(dt);
 
     // --- 运动模糊：先叠半透明黑遮罩擦除残影，再叠加绘制粒子 ---
     // 爆破时降低擦除强度 => 拖尾更长
