@@ -346,6 +346,11 @@
     }
     return val;
   }
+  // JS 版 smoothstep（GLSL 内置函数在 JS 中不存在，需手动实现）
+  function smoothstep(e0, e1, x) {
+    const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0)));
+    return t * t * (3 - 2 * t);
+  }
 
   // 透镜状盆地的「等效半径」：x 方向压缩 => 椭圆轮廓（东西长、南北短）
   // 并对长轴做轻微旋转，呼应真实塔里木盆地的走向
@@ -463,6 +468,7 @@
     varying float vDiss;
     varying float vZone;
     varying float vDust;
+    varying float vStorm;     // 间歇性风暴强度 0 平静 .. 1 爆发
 
     /* ---- Simplex-style 3D noise (Ashima / 公有领域算法) ---- */
     vec3 mod289(vec3 x){ return x - floor(x*(1.0/289.0))*289.0; }
@@ -546,19 +552,67 @@
       // 雪山区几乎静止；沙尘区随密度剧烈翻卷
       float mobility = (1.0 - aZone) * (0.45 + 0.85 * aDust);
 
-      /* ---------- 状态 1：盆地内部 Curl-Noise 流沙波动 ---------- */
-      vec3 flowSample = pos * 0.0035 + vec3(uTime * 0.06 * spd, uTime * 0.03, 0.0);
+      /* ===== 间歇性沙尘暴：低频正弦调制 + smoothstep 阈值裁剪 =====
+         周期约 10s（≈平静 6s / 狂暴 4s）。
+         sin 频率 0.6283 ≈ 2π/10 => 精确 10 秒一轮。
+         smoothstep(0.35, 0.85,...) 把正弦上半段裁成「缓入缓出」的爆发开关，
+         阈值偏高 => 平静期更长、狂暴期更短促有力（呼吸律动）。 */
+      float stormWave = sin(uTime * 0.6283 - 1.2) * 0.5 + 0.5;     // 0..1 低频波
+      float stormIntensity = smoothstep(0.35, 0.85, stormWave);    // 0 平静 .. 1 爆发
+      vStorm = stormIntensity;
+
+      /* ---------- 状态 1：盆地内部 Curl-Noise 流沙波动（受风暴调制）---------- */
+      // 频率调制：爆发期噪声频率抬升 => 卷曲更细碎狂乱
+      float flowFreq = 0.0035 * (1.0 + stormIntensity * 1.6);
+      // 流动速度也随风暴加快
+      float flowRate = 0.06 * (1.0 + stormIntensity * 1.8);
+      vec3 flowSample = pos * flowFreq + vec3(uTime * flowRate * spd, uTime * 0.03, 0.0);
       vec3 curl = curlNoise(flowSample);
 
-      // 自左向右整体平流（狂风卷沙宏观危机）
+      // 自左向右整体平流（基础微风，平静期也存在）
       float drift = sin(uTime * 0.5 + pos.z * 0.01) * 6.0;
-      vec3 flowDisp = (curl * (24.0 * spd) + vec3(drift, 0.0, 0.0)) * mobility;
 
-      // 沙丘上下波动（沙尘区扬尘起伏）
-      flowDisp.y += sin(uTime * 0.9 + pos.x * 0.02 + pos.z * 0.015) * 10.0 * mobility;
-      flowDisp.y += aDust * (1.0 - aZone) * (4.0 + 6.0 * sin(uTime * 0.7 + pos.x * 0.01)); // 扬尘抬升
+      // 振幅调制：平静期基础涟漪 6.0，爆发期暴涨到 6 + 46 = 52（成片翻卷）
+      float curlAmp = 6.0 + stormIntensity * 46.0;
+      // 水平 (xz) 流场自由翻卷；Y 轴单独做单向（向上）物理约束，下面单独处理
+      vec3 flowDisp = curl * (curlAmp * spd) * mobility;
+      flowDisp += vec3(drift, 0.0, 0.0) * mobility;
+      flowDisp.y = 0.0;   // 清空噪声给的垂直分量，由下方单向抬升逻辑接管
 
-      vec3 flowPos = pos + flowDisp * (1.0 - uMorph);
+      /* ===== 地面物理硬约束：扬沙单向起飞 + 重力回落 + 地表绝对下限 =====
+         groundHeight 即粒子原始烘焙高度（盆地/山脉表面），是不可穿透的绝对地板。 */
+      float groundHeight = pos.y;
+
+      // (3) 扬沙起飞的单向性：所有垂直扰动取绝对值/正向，只允许向上离地
+      // 平静期：贴地微幅荡漾（abs => 永不为负，等于轻轻浮起再落下）
+      float ripple = abs(sin(uTime * 0.9 + pos.x * 0.02 + pos.z * 0.015))
+                     * (3.0 + stormIntensity * 12.0) * mobility;
+      // 基础扬尘（始终 ≥ 0）
+      float baseDust = aDust * (1.0 - aZone) * (4.0 + 6.0 * (0.5 + 0.5 * sin(uTime * 0.7 + pos.x * 0.01)));
+
+      // 爆发期：强力离地卷起，向高空撕扯抛洒（3D 龙卷风沙浪涌），取正向湍流
+      float lift = stormIntensity * stormIntensity;          // 二次曲线 => 爆发更迅猛
+      float liftTurb = abs(curlNoise(pos * 0.006 + uTime * 0.25).y);  // 正向紊乱抬升场
+      float updraft = mobility * lift * (60.0 + 80.0 * liftTurb)
+                      * (0.5 + 0.5 * sin(uTime * 1.7 + pos.x * 0.015 + pos.z * 0.02));
+
+      // 单向向上的总抬升量（恒 ≥ 0）
+      float upLift = ripple + baseDust + max(updraft, 0.0);
+
+      // (2) 向下吸附的阻尼重力：风暴越平息(stormIntensity→0)，回落拉力越强
+      //     用 (1 - stormIntensity) 作权重，把抬升量平滑衰减 => 粒子带阻尼贴回地表
+      float settle = 1.0 - smoothstep(0.0, 0.6, stormIntensity); // 0 爆发不回落 .. 1 平静强回落
+      float gravityDamp = mix(1.0, 0.06, settle);                // 平静期把抬升压到 6% => 贴地
+      upLift *= gravityDamp;
+
+      // 爆发期叠加额外水平撕扯，强化龙卷卷扬感
+      flowDisp.xz += curl.xz * mobility * lift * 40.0 * spd;
+
+      // (1) 地形高度作为绝对下限：max() 单向约束，噪声再向下也不能穿透地表
+      vec3 flowOffsetXZ = vec3(flowDisp.x, 0.0, flowDisp.z) * (1.0 - uMorph);
+      float targetY = groundHeight + upLift * (1.0 - uMorph);
+      vec3 flowPos = pos + flowOffsetXZ;
+      flowPos.y = max(groundHeight, targetY);   // 绝对地板：粒子最低只能贴在地表
 
       /* ---------- 鼠标 3D 排斥：挖空流体漩涡 ---------- */
       vec3 toMouse = flowPos - uMouse;
@@ -569,6 +623,8 @@
       vec3 tangent = normalize(cross(toMouse, vec3(0.0, 1.0, 0.0)) + 1e-4);
       flowPos += normalize(toMouse + 1e-4) * push * 120.0;
       flowPos += tangent * push * 70.0;
+      // 鼠标排斥同样不得把粒子压穿地表（仅作用于流场态，爆破态稍后自由插值）
+      flowPos.y = max(groundHeight, flowPos.y);
 
       /* ---------- 状态 2：径向爆破与线性扫描解体 ---------- */
       // 爆破目标：原点向外强力冲力 + 随机方向乱飞 + 线性扫描相位
@@ -623,6 +679,7 @@
     varying float vDiss;
     varying float vZone;      // 0 盆地沙尘 .. 1 雪山脊
     varying float vDust;      // 沙尘羽流密度
+    varying float vStorm;     // 间歇性风暴强度 0 平静 .. 1 爆发
 
     void main(){
       // 片元到粒子中心距离
@@ -652,12 +709,16 @@
       // 雪山脊整体更冷亮一档，盆地暖；强化冷暖对比
       col *= mix(vec3(1.0, 0.94, 0.82), vec3(0.86, 0.93, 1.08), vZone);
 
+      // 间歇性沙尘暴视觉联动：爆发期发光提升 ~20%（仅作用于盆地沙尘，雪山不受扬尘影响）
+      float stormGlow = vStorm * (1.0 - vZone);
+      col *= (1.0 + 0.20 * stormGlow);
+
       // 爆破时核心略转炽红，呈生态危机感
       col = mix(col, col * vec3(1.18, 0.66, 0.40), vDiss * 0.5);
 
-      // 透明度：浓沙尘扬尘更亮、雪山脊略实，薄沙半透
+      // 透明度：浓沙尘扬尘更亮、雪山脊略实，薄沙半透；爆发期整体增亮 ~20%
       float densityA = 0.55 + 0.45 * vDust + 0.25 * vZone;
-      float alpha = intensity * vAlpha * densityA;
+      float alpha = intensity * vAlpha * densityA * (1.0 + 0.20 * stormGlow);
       if (alpha < 0.003) discard;
 
       gl_FragColor = vec4(col, alpha);
