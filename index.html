@@ -311,10 +311,14 @@
   const GRID = 300;                       // 300 * 300 = 90,000 顶点
   const COUNT = GRID * GRID;
   const SPAN = 900;                        // 世界尺度
+  const SPAN_X = SPAN * 1.45;              // 盆地东西向更长（透镜状），匹配遥感图
+  const SPAN_Z = SPAN * 1.0;
 
   const positions = new Float32Array(COUNT * 3);
   const aRandom   = new Float32Array(COUNT * 3); // 每粒子随机参数（爆破方向/相位）
   const aSpeed    = new Float32Array(COUNT);     // 流场速度差异
+  const aZone     = new Float32Array(COUNT);     // 0=盆地沙尘 1=雪山脊（驱动冷/暖配色）
+  const aDust     = new Float32Array(COUNT);     // 沙尘羽流密度（驱动亮度/不透明梯度）
 
   // --- JS 端 fractal noise（用于地形基底高度 + BoundingBox 居中）---
   // 经典 value-noise + fBm，纯数学、无外部依赖
@@ -335,7 +339,7 @@
   }
   function fbm(x, y) {
     let val = 0, amp = 0.5, freq = 1.0;
-    for (let o = 0; o < 5; o++) {
+    for (let o = 0; o < 6; o++) {
       val += amp * vnoise(x * freq, y * freq);
       freq *= 2.0;
       amp *= 0.5;
@@ -343,18 +347,29 @@
     return val;
   }
 
-  // 盆地高度函数：边缘山脉隆起，中心塌陷
+  // 透镜状盆地的「等效半径」：x 方向压缩 => 椭圆轮廓（东西长、南北短）
+  // 并对长轴做轻微旋转，呼应真实塔里木盆地的走向
+  function lensRadius(nx, nz) {
+    const ang = -0.18;                         // 长轴轻微倾斜
+    const rx = nx * Math.cos(ang) - nz * Math.sin(ang);
+    const rz = nx * Math.sin(ang) + nz * Math.cos(ang);
+    const ex = rx * 0.74;                       // x 轴压缩 => 椭圆
+    const ez = rz * 1.06;
+    return Math.sqrt(ex * ex + ez * ez);
+  }
+
+  // 盆地高度函数：四周雪山脊隆起、中心沙尘盆地塌陷（透镜形）
   function basinHeight(nx, nz) {
-    // nx,nz ∈ [-1,1]
-    const r = Math.sqrt(nx * nx + nz * nz);     // 到中心距离
-    // 碗状塌陷：中心低，边缘高（昆仑/天山山脉环抱）
-    const bowl = Math.pow(Math.min(r, 1.0), 2.2) * 260.0 - 90.0;
-    // 山脉脊线：边缘加剧抬升
-    const ridge = Math.pow(Math.max(r - 0.45, 0.0), 1.6) * 320.0;
-    // 分形沙丘细节
-    const detail = (fbm((nx + 1) * 3.0, (nz + 1) * 3.0) - 0.5) * 110.0;
-    const dunes  = Math.sin(nx * 14.0) * Math.cos(nz * 11.0) * 14.0 * (1.0 - r);
-    return bowl + ridge + detail + dunes;
+    const r = Math.min(lensRadius(nx, nz), 1.0);
+    // 碗状塌陷：中心低，边缘高（昆仑 / 天山 环抱）
+    const bowl = Math.pow(r, 2.3) * 240.0 - 70.0;
+    // 雪山脊线：外缘剧烈抬升，并叠加锯齿状脊背噪声
+    const ridgeBase = Math.pow(Math.max(r - 0.5, 0.0), 1.5) * 360.0;
+    const ridgeJag  = Math.max(r - 0.55, 0.0) * (fbm(nx * 6.0 + 11.0, nz * 6.0 + 7.0) - 0.5) * 420.0;
+    // 盆地内部沙丘细节（仅中心明显）
+    const detail = (fbm((nx + 1) * 3.2, (nz + 1) * 3.2) - 0.5) * 70.0 * (1.0 - r);
+    const dunes  = Math.sin(nx * 16.0) * Math.cos(nz * 13.0) * 10.0 * (1.0 - r);
+    return bowl + ridgeBase + ridgeJag + detail + dunes;
   }
 
   let i3 = 0;
@@ -362,8 +377,8 @@
     for (let iz = 0; iz < GRID; iz++) {
       const u = ix / (GRID - 1);
       const v = iz / (GRID - 1);
-      const x = (u - 0.5) * SPAN;
-      const z = (v - 0.5) * SPAN;
+      const x = (u - 0.5) * SPAN_X;
+      const z = (v - 0.5) * SPAN_Z;
       const nx = (u - 0.5) * 2.0;
       const nz = (v - 0.5) * 2.0;
       const y = basinHeight(nx, nz);
@@ -371,6 +386,30 @@
       positions[i3 + 0] = x;
       positions[i3 + 1] = y;
       positions[i3 + 2] = z;
+
+      // 区带：透镜半径 0.5~0.85 区间从盆地过渡到雪山脊
+      const r = lensRadius(nx, nz);
+      let zone = (r - 0.52) / 0.33;             // 0 盆地 .. 1 雪山
+      zone = Math.max(0.0, Math.min(1.0, zone));
+      // 脊背噪声让雪线参差（雪舌沿山谷下伸）
+      zone = Math.max(0.0, Math.min(1.0, zone + (fbm(nx * 5.0, nz * 5.0) - 0.5) * 0.55));
+      aZone[Math.floor(i3 / 3)] = zone;
+
+      // 沙尘羽流：中心浓、向边缘渐薄的旋涡密度场（匹配遥感图中央亮沙尘沉积）
+      const plumeCx = 0.05, plumeCz = 0.02;     // 羽流中心几乎居中
+      const pdx = nx - plumeCx, pdz = nz - plumeCz;
+      const pr = Math.sqrt(pdx*pdx + pdz*pdz);
+      const swirl = Math.atan2(pdz, pdx) * 1.5 + pr * 3.0;
+      let dust = fbm(nx * 2.2 + Math.cos(swirl)*0.6 + 30.0,
+                     nz * 2.2 + Math.sin(swirl)*0.6 + 30.0);
+      // 中心明亮沙尘沉积：随到中心距离衰减
+      dust = dust * (1.0 - Math.min(pr * 0.85, 1.0)) + 0.25;
+      // 干涸河道暗纹：细长低密度沟壑横切沙尘（遥感图中的河网脉络）
+      const vein = Math.abs(Math.sin(nx * 7.0 + nz * 4.0 + fbm(nx*3.0, nz*3.0) * 6.0));
+      dust *= (0.7 + 0.3 * smoothstep(0.0, 0.25, vein));
+      dust = Math.pow(Math.max(dust, 0.0), 1.1);
+      dust *= (1.0 - zone);                      // 雪山区无沙尘
+      aDust[Math.floor(i3 / 3)] = Math.max(0.0, Math.min(1.0, dust * 1.35));
 
       // 随机爆破方向（球面均匀分布）
       const theta = hash2(ix * 1.3, iz * 2.7) * Math.PI * 2.0;
@@ -389,6 +428,8 @@
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geometry.setAttribute('aRandom',  new THREE.BufferAttribute(aRandom, 3));
   geometry.setAttribute('aSpeed',   new THREE.BufferAttribute(aSpeed, 1));
+  geometry.setAttribute('aZone',    new THREE.BufferAttribute(aZone, 1));
+  geometry.setAttribute('aDust',    new THREE.BufferAttribute(aDust, 1));
 
   // BoundingBox 居中计算，防止视口偏移
   geometry.computeBoundingBox();
@@ -406,6 +447,8 @@
 
     attribute vec3  aRandom;
     attribute float aSpeed;
+    attribute float aZone;       // 0 盆地沙尘 .. 1 雪山脊
+    attribute float aDust;       // 沙尘羽流密度
 
     uniform float uTime;
     uniform float uState;        // 0 = 流沙波动, 1 = 爆破
@@ -418,6 +461,8 @@
     varying float vSpeed;
     varying float vAlpha;
     varying float vDiss;
+    varying float vZone;
+    varying float vDust;
 
     /* ---- Simplex-style 3D noise (Ashima / 公有领域算法) ---- */
     vec3 mod289(vec3 x){ return x - floor(x*(1.0/289.0))*289.0; }
@@ -495,6 +540,11 @@
       vec3 pos = position;
       float spd = aSpeed;
       vSpeed = spd;
+      vZone = aZone;
+      vDust = aDust;
+
+      // 雪山区几乎静止；沙尘区随密度剧烈翻卷
+      float mobility = (1.0 - aZone) * (0.45 + 0.85 * aDust);
 
       /* ---------- 状态 1：盆地内部 Curl-Noise 流沙波动 ---------- */
       vec3 flowSample = pos * 0.0035 + vec3(uTime * 0.06 * spd, uTime * 0.03, 0.0);
@@ -502,10 +552,11 @@
 
       // 自左向右整体平流（狂风卷沙宏观危机）
       float drift = sin(uTime * 0.5 + pos.z * 0.01) * 6.0;
-      vec3 flowDisp = curl * (22.0 * spd) + vec3(drift, 0.0, 0.0);
+      vec3 flowDisp = (curl * (24.0 * spd) + vec3(drift, 0.0, 0.0)) * mobility;
 
-      // 沙丘上下波动
-      flowDisp.y += sin(uTime * 0.9 + pos.x * 0.02 + pos.z * 0.015) * 9.0;
+      // 沙丘上下波动（沙尘区扬尘起伏）
+      flowDisp.y += sin(uTime * 0.9 + pos.x * 0.02 + pos.z * 0.015) * 10.0 * mobility;
+      flowDisp.y += aDust * (1.0 - aZone) * (4.0 + 6.0 * sin(uTime * 0.7 + pos.x * 0.01)); // 扬尘抬升
 
       vec3 flowPos = pos + flowDisp * (1.0 - uMorph);
 
@@ -562,12 +613,16 @@
   const fragmentShader = /* glsl */`
     precision highp float;
 
-    uniform vec3  uColor;     // 琥珀金
+    uniform vec3  uColor;     // 琥珀金（沙尘主色）
+    uniform vec3  uSnow;      // 冷白雪山色
+    uniform vec3  uHaze;      // 沙尘羽流高浓度处的灰白霾色
     uniform float uTime;
 
     varying float vSpeed;
     varying float vAlpha;
     varying float vDiss;
+    varying float vZone;      // 0 盆地沙尘 .. 1 雪山脊
+    varying float vDust;      // 沙尘羽流密度
 
     void main(){
       // 片元到粒子中心距离
@@ -580,17 +635,29 @@
       float core = smoothstep(0.42, 0.0, dist);
       // 柔软外晕：指数级衰减拖尾 exp(-dist*dist)
       float halo = exp(-dist * dist * 4.5);
-
       float intensity = core * 1.6 + halo * 0.75;
 
-      // 琥珀金核心 + 内核偏白炽（核心提亮）
-      vec3 hot  = mix(uColor, vec3(1.0, 0.92, 0.72), core * 0.85);
-      vec3 col  = hot * intensity;
+      /* -------- 遥感图配色重塑 --------
+         冷白雪山脊 (uSnow)  ←  暖琥珀沙尘 (uColor)  →  灰白浓霾 (uHaze)
+         vZone 决定冷/暖；vDust 决定沙尘从深琥珀(薄)到灰白(浓)的扬尘梯度 */
+      // 1) 盆地基色：薄沙=深琥珀，浓沙尘羽流=灰白扬尘
+      vec3 basinCol = mix(uColor, uHaze, smoothstep(0.15, 0.95, vDust));
+      // 2) 向雪山脊过渡为冷白
+      vec3 surfCol  = mix(basinCol, uSnow, smoothstep(0.35, 0.9, vZone));
+      // 3) 核心高光提亮（白炽内核，全息星尘质感）
+      vec3 hot = mix(surfCol, vec3(1.0, 0.96, 0.86), core * 0.8);
 
-      // 爆破时核心略转炽红，呈危机感
-      col = mix(col, col * vec3(1.15, 0.7, 0.45), vDiss * 0.5);
+      vec3 col = hot * intensity;
 
-      float alpha = intensity * vAlpha;
+      // 雪山脊整体更冷亮一档，盆地暖；强化冷暖对比
+      col *= mix(vec3(1.0, 0.94, 0.82), vec3(0.86, 0.93, 1.08), vZone);
+
+      // 爆破时核心略转炽红，呈生态危机感
+      col = mix(col, col * vec3(1.18, 0.66, 0.40), vDiss * 0.5);
+
+      // 透明度：浓沙尘扬尘更亮、雪山脊略实，薄沙半透
+      float densityA = 0.55 + 0.45 * vDust + 0.25 * vZone;
+      float alpha = intensity * vAlpha * densityA;
       if (alpha < 0.003) discard;
 
       gl_FragColor = vec4(col, alpha);
@@ -609,7 +676,9 @@
       uMouse:     { value: new THREE.Vector3(99999, 99999, 99999) },
       uMouseStr:  { value: 0 },
       uPixelRatio:{ value: Math.min(window.devicePixelRatio, 2) },
-      uColor:     { value: new THREE.Color(0xE5A00D) }
+      uColor:     { value: new THREE.Color(0xD9952A) },   // 暖琥珀沙尘（偏暖砂）
+      uSnow:      { value: new THREE.Color(0xeaf0f4) },    // 冷白雪山（近白微蓝）
+      uHaze:      { value: new THREE.Color(0xeaddb8) }     // 浓沙尘灰白扬尘霾（米沙色）
     },
     vertexShader: vertexShader
       .replace(/SPAN_HALF/g, (SPAN * 0.5).toFixed(1))
