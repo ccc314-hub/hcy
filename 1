@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第一章：沙之息 // SHADOW OF DUNES</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #060608; }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  /* Motion-blur compositing canvas sits on top of the WebGL canvas */
+  #trailLayer {
+    position: fixed; inset: 0; pointer-events: none; z-index: 1;
+  }
+
+  #panel {
+    position: fixed;
+    top: 0; right: 0;
+    width: 380px;
+    height: 100%;
+    z-index: 10;
+    background: rgba(10, 10, 15, 0.7);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    border-left: 1px solid rgba(229, 160, 13, 0.55);
+    box-shadow: -8px 0 40px rgba(229, 160, 13, 0.10),
+                inset 1px 0 18px rgba(229, 160, 13, 0.18);
+    padding: 28px 26px;
+    font-family: "SF Mono", "Consolas", "Menlo", monospace;
+    color: #d8d8e2;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    overflow-y: auto;
+  }
+  #panel::-webkit-scrollbar { width: 6px; }
+  #panel::-webkit-scrollbar-thumb { background: rgba(229,160,13,0.4); border-radius: 3px; }
+
+  .hdr {
+    border-bottom: 1px solid rgba(229,160,13,0.35);
+    padding-bottom: 14px;
+  }
+  .section-tag {
+    font-size: 12px;
+    letter-spacing: 3px;
+    color: #E5A00D;
+    text-shadow: 0 0 8px rgba(229,160,13,0.7);
+  }
+  .title-cn {
+    font-size: 26px;
+    font-weight: 700;
+    margin-top: 8px;
+    letter-spacing: 6px;
+    color: #f3e2bd;
+    text-shadow: 0 0 14px rgba(229,160,13,0.55);
+  }
+  .title-en {
+    font-size: 11px;
+    letter-spacing: 4px;
+    margin-top: 4px;
+    color: #8a8a96;
+  }
+
+  .status-line {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    letter-spacing: 2px;
+  }
+  .blink {
+    color: #ff2e3e;
+    font-weight: 700;
+    text-shadow: 0 0 10px rgba(255,46,62,0.8);
+    animation: pulse 0.9s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
+  .dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: #ff2e3e; box-shadow: 0 0 10px #ff2e3e;
+    animation: pulse 0.9s infinite;
+  }
+
+  .metric {
+    border: 1px solid rgba(229,160,13,0.18);
+    border-radius: 4px;
+    padding: 12px 14px;
+    background: rgba(229,160,13,0.04);
+  }
+  .metric .label {
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    color: #9a9aa6;
+    margin-bottom: 6px;
+  }
+  .metric .label .cn { color: #c6c6d0; }
+  .metric .value {
+    font-size: 22px;
+    font-weight: 700;
+    color: #ff3a48;
+    text-shadow: 0 0 8px rgba(255,58,72,0.6);
+    font-variant-numeric: tabular-nums;
+  }
+  .metric .unit { font-size: 12px; color: #E5A00D; margin-left: 6px; }
+  .metric .note { font-size: 9px; color: #6f6f7a; margin-top: 5px; letter-spacing: 1px; }
+
+  .footer {
+    margin-top: auto;
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    color: #6f6f7a;
+    border-top: 1px solid rgba(229,160,13,0.25);
+    padding-top: 14px;
+    line-height: 1.9;
+  }
+  .footer .key {
+    color: #E5A00D; font-weight: 700;
+  }
+  .grain {
+    position: fixed; inset: 0; pointer-events: none; z-index: 5;
+    background:
+      radial-gradient(circle at 30% 40%, rgba(229,160,13,0.05), transparent 60%),
+      radial-gradient(circle at 70% 70%, rgba(255,46,62,0.03), transparent 60%);
+    mix-blend-mode: screen;
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="grain"></div>
+
+<div id="panel">
+  <div class="hdr">
+    <div class="section-tag">SECTION: 01 // SHADOW OF DUNES</div>
+    <div class="title-cn">沙 之 息</div>
+    <div class="title-en">DIGITAL TWIN · TARIM BASIN</div>
+  </div>
+
+  <div class="status-line">
+    <span class="dot"></span>
+    <span>SYSTEM STATUS:</span>
+    <span class="blink">ECO-CRISIS [ALERT]</span>
+  </div>
+
+  <div class="metric">
+    <div class="label"><span class="cn">最大风速</span> / Max Wind Speed</div>
+    <div><span class="value" id="m-wind">14.0</span><span class="unit">m/s</span></div>
+    <div class="note">盆地南缘特强沙尘暴实测 [9.8 ~ 18.2]</div>
+  </div>
+
+  <div class="metric">
+    <div class="label"><span class="cn">表层土壤含水率</span> / Soil Moisture</div>
+    <div><span class="value" id="m-moist">2.50</span><span class="unit">%</span></div>
+    <div class="note">台特玛湖干涸荒漠区实测 [2.0 ~ 3.0]</div>
+  </div>
+
+  <div class="metric">
+    <div class="label"><span class="cn">风沙侵蚀扩张速率</span> / Expansion Rate</div>
+    <div><span class="value" id="m-expand">4.00</span><span class="unit">m/year</span></div>
+    <div class="note">库姆塔格与塔克拉玛干合拢推进 [3.0 ~ 5.0]</div>
+  </div>
+
+  <div class="footer">
+    <div><span class="key">[ MOUSE ]</span> 流体漩涡排斥 / Vortex Repel</div>
+    <div><span class="key">[ SPACE ]</span> 径向爆破 ↔ 引力凝聚</div>
+    <div style="margin-top:8px; color:#4a4a55;">VERTICES: 90,000 · CURL-NOISE FLOW FIELD</div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* =========================================================================
+   第一章：沙之息  —  3D 塔里木盆地数字孪生点云 / Curl-Noise 流沙危机
+   纯单文件 · 无外部资源 · 手写 RawShader 级 ShaderMaterial
+   ========================================================================= */
+
+(function () {
+  'use strict';
+
+  const container = document.getElementById('app');
+
+  // ---------------------------------------------------------------------
+  // 渲染器：保留缓冲区以利用 WebGL 不完全擦除特性拉出运动模糊尾迹
+  // ---------------------------------------------------------------------
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    alpha: false,
+    preserveDrawingBuffer: true   // 关键：运动模糊残影
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setClearColor(0x060608, 1);
+  renderer.autoClearColor = false; // 我们手动用半透明黑遮罩擦除
+  container.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+
+  const camera = new THREE.PerspectiveCamera(
+    52, window.innerWidth / window.innerHeight, 0.1, 4000
+  );
+  camera.position.set(0, 340, 560);
+  camera.lookAt(0, -40, 0);
+
+  // 半透明黑遮罩场景（用于绘制运动模糊残影衰减层）
+  const fadeScene = new THREE.Scene();
+  const fadeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const fadeMat = new THREE.MeshBasicMaterial({
+    color: 0x060608,
+    transparent: true,
+    opacity: 0.22,            // 默认每帧擦除强度
+    depthTest: false,
+    depthWrite: false
+  });
+  const fadeQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), fadeMat);
+  fadeScene.add(fadeQuad);
+
+  // ---------------------------------------------------------------------
+  // 程序化地形点云：50000+ 顶点（此处 300x300 = 90000）
+  // 盆地数字孪生：四周山脉隆起 + 中心塌陷
+  // ---------------------------------------------------------------------
+  const GRID = 300;                       // 300 * 300 = 90,000 顶点
+  const COUNT = GRID * GRID;
+  const SPAN = 900;                        // 世界尺度
+
+  const positions = new Float32Array(COUNT * 3);
+  const aRandom   = new Float32Array(COUNT * 3); // 每粒子随机参数（爆破方向/相位）
+  const aSpeed    = new Float32Array(COUNT);     // 流场速度差异
+
+  // --- JS 端 fractal noise（用于地形基底高度 + BoundingBox 居中）---
+  // 经典 value-noise + fBm，纯数学、无外部依赖
+  function hash2(x, y) {
+    let h = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+    return h - Math.floor(h);
+  }
+  function vnoise(x, y) {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const xf = x - xi, yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf);
+    const v = yf * yf * (3 - 2 * yf);
+    const a = hash2(xi, yi);
+    const b = hash2(xi + 1, yi);
+    const c = hash2(xi, yi + 1);
+    const d = hash2(xi + 1, yi + 1);
+    return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
+  }
+  function fbm(x, y) {
+    let val = 0, amp = 0.5, freq = 1.0;
+    for (let o = 0; o < 5; o++) {
+      val += amp * vnoise(x * freq, y * freq);
+      freq *= 2.0;
+      amp *= 0.5;
+    }
+    return val;
+  }
+
+  // 盆地高度函数：边缘山脉隆起，中心塌陷
+  function basinHeight(nx, nz) {
+    // nx,nz ∈ [-1,1]
+    const r = Math.sqrt(nx * nx + nz * nz);     // 到中心距离
+    // 碗状塌陷：中心低，边缘高（昆仑/天山山脉环抱）
+    const bowl = Math.pow(Math.min(r, 1.0), 2.2) * 260.0 - 90.0;
+    // 山脉脊线：边缘加剧抬升
+    const ridge = Math.pow(Math.max(r - 0.45, 0.0), 1.6) * 320.0;
+    // 分形沙丘细节
+    const detail = (fbm((nx + 1) * 3.0, (nz + 1) * 3.0) - 0.5) * 110.0;
+    const dunes  = Math.sin(nx * 14.0) * Math.cos(nz * 11.0) * 14.0 * (1.0 - r);
+    return bowl + ridge + detail + dunes;
+  }
+
+  let i3 = 0;
+  for (let ix = 0; ix < GRID; ix++) {
+    for (let iz = 0; iz < GRID; iz++) {
+      const u = ix / (GRID - 1);
+      const v = iz / (GRID - 1);
+      const x = (u - 0.5) * SPAN;
+      const z = (v - 0.5) * SPAN;
+      const nx = (u - 0.5) * 2.0;
+      const nz = (v - 0.5) * 2.0;
+      const y = basinHeight(nx, nz);
+
+      positions[i3 + 0] = x;
+      positions[i3 + 1] = y;
+      positions[i3 + 2] = z;
+
+      // 随机爆破方向（球面均匀分布）
+      const theta = hash2(ix * 1.3, iz * 2.7) * Math.PI * 2.0;
+      const phi   = Math.acos(2.0 * hash2(ix * 3.1 + 5.0, iz * 1.7 + 2.0) - 1.0);
+      aRandom[i3 + 0] = Math.sin(phi) * Math.cos(theta);
+      aRandom[i3 + 1] = Math.cos(phi);
+      aRandom[i3 + 2] = Math.sin(phi) * Math.sin(theta);
+
+      aSpeed[Math.floor(i3 / 3)] = 0.4 + hash2(ix * 0.7, iz * 0.9) * 1.6;
+
+      i3 += 3;
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('aRandom',  new THREE.BufferAttribute(aRandom, 3));
+  geometry.setAttribute('aSpeed',   new THREE.BufferAttribute(aSpeed, 1));
+
+  // BoundingBox 居中计算，防止视口偏移
+  geometry.computeBoundingBox();
+  const bbox = geometry.boundingBox;
+  const center = new THREE.Vector3();
+  bbox.getCenter(center);
+  geometry.translate(-center.x, -center.y, -center.z);
+
+  // ---------------------------------------------------------------------
+  // GLSL：Vertex Shader —— 分形噪点已烘焙进位置，此处叠加 3D Curl Noise 流场
+  //        + 鼠标排斥漩涡 + 径向爆破/引力凝聚状态机
+  // ---------------------------------------------------------------------
+  const vertexShader = /* glsl */`
+    precision highp float;
+
+    attribute vec3  aRandom;
+    attribute float aSpeed;
+
+    uniform float uTime;
+    uniform float uState;        // 0 = 流沙波动, 1 = 爆破
+    uniform float uMorph;        // 0..1 平滑插值（含 easeOutCubic 引力凝聚）
+    uniform float uBurst;        // 爆破推进强度
+    uniform vec3  uMouse;        // 鼠标 3D 世界坐标
+    uniform float uMouseStr;     // 鼠标排斥强度（带阻尼回位）
+    uniform float uPixelRatio;
+
+    varying float vSpeed;
+    varying float vAlpha;
+    varying float vDiss;
+
+    /* ---- Simplex-style 3D noise (Ashima / 公有领域算法) ---- */
+    vec3 mod289(vec3 x){ return x - floor(x*(1.0/289.0))*289.0; }
+    vec4 mod289(vec4 x){ return x - floor(x*(1.0/289.0))*289.0; }
+    vec4 permute(vec4 x){ return mod289(((x*34.0)+1.0)*x); }
+    vec4 taylorInvSqrt(vec4 r){ return 1.79284291400159 - 0.85373472095314*r; }
+
+    float snoise(vec3 v){
+      const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+      const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+      vec3 i  = floor(v + dot(v, C.yyy));
+      vec3 x0 = v - i + dot(i, C.xxx);
+      vec3 g = step(x0.yzx, x0.xyz);
+      vec3 l = 1.0 - g;
+      vec3 i1 = min(g.xyz, l.zxy);
+      vec3 i2 = max(g.xyz, l.zxy);
+      vec3 x1 = x0 - i1 + C.xxx;
+      vec3 x2 = x0 - i2 + C.yyy;
+      vec3 x3 = x0 - D.yyy;
+      i = mod289(i);
+      vec4 p = permute(permute(permute(
+                 i.z + vec4(0.0, i1.z, i2.z, 1.0))
+               + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+               + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+      float n_ = 0.142857142857;
+      vec3 ns = n_ * D.wyz - D.xzx;
+      vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+      vec4 x_ = floor(j * ns.z);
+      vec4 y_ = floor(j - 7.0 * x_);
+      vec4 x = x_ * ns.x + ns.yyyy;
+      vec4 y = y_ * ns.x + ns.yyyy;
+      vec4 h = 1.0 - abs(x) - abs(y);
+      vec4 b0 = vec4(x.xy, y.xy);
+      vec4 b1 = vec4(x.zw, y.zw);
+      vec4 s0 = floor(b0)*2.0 + 1.0;
+      vec4 s1 = floor(b1)*2.0 + 1.0;
+      vec4 sh = -step(h, vec4(0.0));
+      vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+      vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+      vec3 p0 = vec3(a0.xy, h.x);
+      vec3 p1 = vec3(a0.zw, h.y);
+      vec3 p2 = vec3(a1.xy, h.z);
+      vec3 p3 = vec3(a1.zw, h.w);
+      vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+      p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+      vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+      m = m * m;
+      return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+    }
+
+    /* ---- Curl Noise：对噪声场求旋度，得无散度流场（卷曲流沙）---- */
+    vec3 curlNoise(vec3 p){
+      const float e = 0.12;
+      vec3 dx = vec3(e, 0.0, 0.0);
+      vec3 dy = vec3(0.0, e, 0.0);
+      vec3 dz = vec3(0.0, 0.0, e);
+
+      float x0 = snoise(p - dx); float x1 = snoise(p + dx);
+      float y0 = snoise(p - dy); float y1 = snoise(p + dy);
+      float z0 = snoise(p - dz); float z1 = snoise(p + dz);
+
+      // 第二个偏移场，保证三分量独立
+      vec3 p2 = p + vec3(123.4, 56.7, 89.1);
+      float x0b = snoise(p2 - dx); float x1b = snoise(p2 + dx);
+      float y0b = snoise(p2 - dy); float y1b = snoise(p2 + dy);
+      float z0b = snoise(p2 - dz); float z1b = snoise(p2 + dz);
+
+      float cx = (y1b - y0b) - (z1 - z0);
+      float cy = (z1b - z0b) - (x1 - x0);
+      float cz = (x1 - x0) - (y1b - y0b);
+      return normalize(vec3(cx, cy, cz) + 1e-5) ;
+    }
+
+    void main(){
+      vec3 pos = position;
+      float spd = aSpeed;
+      vSpeed = spd;
+
+      /* ---------- 状态 1：盆地内部 Curl-Noise 流沙波动 ---------- */
+      vec3 flowSample = pos * 0.0035 + vec3(uTime * 0.06 * spd, uTime * 0.03, 0.0);
+      vec3 curl = curlNoise(flowSample);
+
+      // 自左向右整体平流（狂风卷沙宏观危机）
+      float drift = sin(uTime * 0.5 + pos.z * 0.01) * 6.0;
+      vec3 flowDisp = curl * (22.0 * spd) + vec3(drift, 0.0, 0.0);
+
+      // 沙丘上下波动
+      flowDisp.y += sin(uTime * 0.9 + pos.x * 0.02 + pos.z * 0.015) * 9.0;
+
+      vec3 flowPos = pos + flowDisp * (1.0 - uMorph);
+
+      /* ---------- 鼠标 3D 排斥：挖空流体漩涡 ---------- */
+      vec3 toMouse = flowPos - uMouse;
+      float md = length(toMouse);
+      float radius = 150.0;
+      float push = smoothstep(radius, 0.0, md) * uMouseStr;
+      // 切向旋流 + 法向外推 => 漩涡
+      vec3 tangent = normalize(cross(toMouse, vec3(0.0, 1.0, 0.0)) + 1e-4);
+      flowPos += normalize(toMouse + 1e-4) * push * 120.0;
+      flowPos += tangent * push * 70.0;
+
+      /* ---------- 状态 2：径向爆破与线性扫描解体 ---------- */
+      // 爆破目标：原点向外强力冲力 + 随机方向乱飞 + 线性扫描相位
+      float scan = fract((pos.x + SPAN_HALF) / SPAN_FULL); // 0..1 线性扫描
+      float burstT = uBurst;
+      vec3 radial = normalize(pos + 1e-4);
+      vec3 chaos  = aRandom;
+      vec3 burstDir = normalize(radial * 0.6 + chaos * 1.4);
+      float scanDelay = smoothstep(0.0, 1.0, burstT - scan * 0.4);
+      vec3 burstPos = pos
+        + burstDir * (600.0 * scanDelay)
+        + chaos * snoise(pos * 0.01 + uTime * 0.2) * 200.0 * scanDelay;
+      // 爆破时叠加湍流抖动
+      burstPos += curlNoise(burstPos * 0.004 + uTime * 0.15) * 90.0 * burstT;
+
+      /* ---------- 状态机插值：uMorph 含 easeOutCubic 引力凝聚 ---------- */
+      vec3 finalPos = mix(flowPos, burstPos, uMorph);
+
+      /* ---------- 消散透明度（爆破归零曲线）---------- */
+      // dissipationFactor: 越接近爆破完成越大
+      float dissipationFactor = clamp(uMorph * (0.4 + 0.6 * scan), 0.0, 1.0);
+      vDiss = dissipationFactor;
+      float uFadePower = 2.4;
+      float dissAlpha = 1.0 - pow(dissipationFactor, uFadePower); // 绝对归零曲线
+
+      // 速度/时间驱动的动态透明度梯度（全息星尘质感）
+      float flicker = 0.6 + 0.4 * sin(uTime * 2.0 + spd * 12.0 + pos.y * 0.02);
+      vAlpha = clamp(dissAlpha * flicker, 0.0, 1.0);
+
+      vec4 mvPosition = modelViewMatrix * vec4(finalPos, 1.0);
+      gl_Position = projectionMatrix * mvPosition;
+
+      // 透视尺寸 + 爆破时拉大颗粒
+      float size = (2.6 + spd * 2.2) * uPixelRatio * (1.0 + uMorph * 1.4);
+      gl_PointSize = size * (520.0 / -mvPosition.z);
+    }
+  `;
+
+  // ---------------------------------------------------------------------
+  // GLSL：Fragment Shader —— 双态着色（硬内核 + 指数衰减柔晕）
+  // ---------------------------------------------------------------------
+  const fragmentShader = /* glsl */`
+    precision highp float;
+
+    uniform vec3  uColor;     // 琥珀金
+    uniform float uTime;
+
+    varying float vSpeed;
+    varying float vAlpha;
+    varying float vDiss;
+
+    void main(){
+      // 片元到粒子中心距离
+      vec2 uv = gl_PointCoord - vec2(0.5);
+      float dist = length(uv) * 2.0;   // 0(中心) .. 1(边缘)
+
+      if (dist > 1.0) discard;
+
+      // 硬内核：极高亮、边缘锐利
+      float core = smoothstep(0.42, 0.0, dist);
+      // 柔软外晕：指数级衰减拖尾 exp(-dist*dist)
+      float halo = exp(-dist * dist * 4.5);
+
+      float intensity = core * 1.6 + halo * 0.75;
+
+      // 琥珀金核心 + 内核偏白炽（核心提亮）
+      vec3 hot  = mix(uColor, vec3(1.0, 0.92, 0.72), core * 0.85);
+      vec3 col  = hot * intensity;
+
+      // 爆破时核心略转炽红，呈危机感
+      col = mix(col, col * vec3(1.15, 0.7, 0.45), vDiss * 0.5);
+
+      float alpha = intensity * vAlpha;
+      if (alpha < 0.003) discard;
+
+      gl_FragColor = vec4(col, alpha);
+    }
+  `;
+
+  // ---------------------------------------------------------------------
+  // ShaderMaterial：加法混合 + 关闭深度写入 => 电影级全息星尘
+  // ---------------------------------------------------------------------
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime:      { value: 0 },
+      uState:     { value: 0 },
+      uMorph:     { value: 0 },
+      uBurst:     { value: 0 },
+      uMouse:     { value: new THREE.Vector3(99999, 99999, 99999) },
+      uMouseStr:  { value: 0 },
+      uPixelRatio:{ value: Math.min(window.devicePixelRatio, 2) },
+      uColor:     { value: new THREE.Color(0xE5A00D) }
+    },
+    vertexShader: vertexShader
+      .replace(/SPAN_HALF/g, (SPAN * 0.5).toFixed(1))
+      .replace(/SPAN_FULL/g, SPAN.toFixed(1)),
+    fragmentShader: fragmentShader,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    depthTest: false
+  });
+
+  const points = new THREE.Points(geometry, material);
+  points.rotation.x = -0.18;
+  scene.add(points);
+
+  // ---------------------------------------------------------------------
+  // 鼠标 → 3D 世界坐标（Raycaster 投射到地形平面）
+  // ---------------------------------------------------------------------
+  const raycaster = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+  const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const mouseWorld = new THREE.Vector3(99999, 99999, 99999);
+  let mouseActive = false;
+
+  window.addEventListener('mousemove', (e) => {
+    // 排除右侧面板区域
+    if (e.clientX > window.innerWidth - 380) { mouseActive = false; return; }
+    ndc.x = (e.clientX / window.innerWidth) * 2 - 1;
+    ndc.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(ndc, camera);
+    const hit = new THREE.Vector3();
+    if (raycaster.ray.intersectPlane(groundPlane, hit)) {
+      // 逆向 points 的旋转，使坐标系与顶点一致
+      hit.applyAxisAngle(new THREE.Vector3(1, 0, 0), 0.18);
+      mouseWorld.copy(hit);
+      mouseActive = true;
+    }
+  });
+  window.addEventListener('mouseleave', () => { mouseActive = false; });
+
+  // ---------------------------------------------------------------------
+  // 状态机：空格键 爆破 ↔ 凝聚
+  // ---------------------------------------------------------------------
+  let state = 0;                 // 0 流沙, 1 爆破
+  let morphTarget = 0;           // uMorph 目标
+  let burstTarget = 0;
+  let restoring = false;
+  let restoreStart = 0;
+  const RESTORE_DUR = 1.5;       // 1.5s 引力凝聚
+
+  function easeOutCubic(t) { return 1.0 - Math.pow(1.0 - t, 3.0); }
+
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space') {
+      e.preventDefault();
+      if (state === 0) {
+        // → 爆破
+        state = 1;
+        morphTarget = 1;
+        burstTarget = 1;
+        restoring = false;
+      } else {
+        // → 引力凝聚复原
+        state = 0;
+        morphTarget = 0;
+        burstTarget = 0;
+        restoring = true;
+        restoreStart = performance.now() / 1000;
+      }
+    }
+  });
+
+  // ---------------------------------------------------------------------
+  // 面板数据高频刷新（每 0.5s 微幅震荡）
+  // ---------------------------------------------------------------------
+  const elWind   = document.getElementById('m-wind');
+  const elMoist  = document.getElementById('m-moist');
+  const elExpand = document.getElementById('m-expand');
+
+  function rand(min, max) { return min + Math.random() * (max - min); }
+
+  setInterval(() => {
+    elWind.textContent   = rand(9.8, 18.2).toFixed(1);
+    elMoist.textContent  = rand(2.0, 3.0).toFixed(2);
+    elExpand.textContent = rand(3.0, 5.0).toFixed(2);
+  }, 500);
+
+  // ---------------------------------------------------------------------
+  // 主渲染循环
+  // ---------------------------------------------------------------------
+  const clock = new THREE.Clock();
+  let curMorph = 0, curBurst = 0, curMouseStr = 0;
+  let camAngle = 0;
+
+  function animate() {
+    requestAnimationFrame(animate);
+    const dt = Math.min(clock.getDelta(), 0.05);
+    const t = clock.elapsedTime;
+
+    material.uniforms.uTime.value = t;
+
+    // --- uMorph 推进 ---
+    if (restoring) {
+      // 引力凝聚：easeOutCubic 在 1.5s 内由 1 → 0
+      const k = Math.min((performance.now() / 1000 - restoreStart) / RESTORE_DUR, 1.0);
+      curMorph = (1.0 - easeOutCubic(k)) * 1.0;
+      curBurst = curMorph;
+      if (k >= 1.0) { restoring = false; curMorph = 0; curBurst = 0; }
+    } else {
+      // 爆破推进：快速冲出
+      curMorph += (morphTarget - curMorph) * Math.min(dt * 6.0, 1.0);
+      curBurst += (burstTarget - curBurst) * Math.min(dt * 3.5, 1.0);
+    }
+    material.uniforms.uMorph.value = curMorph;
+    material.uniforms.uBurst.value = curBurst;
+    material.uniforms.uState.value = state;
+
+    // --- 鼠标排斥强度（带阻尼回位）---
+    const targetStr = mouseActive ? 1.0 : 0.0;
+    curMouseStr += (targetStr - curMouseStr) * Math.min(dt * 5.0, 1.0);
+    material.uniforms.uMouseStr.value = curMouseStr;
+    material.uniforms.uMouse.value.copy(mouseWorld);
+
+    // --- 缓慢环绕镜头，增强 3D 数字孪生空间感 ---
+    camAngle += dt * 0.05;
+    const radius = 600;
+    camera.position.x = Math.sin(camAngle) * radius;
+    camera.position.z = Math.cos(camAngle) * radius;
+    camera.position.y = 340 + Math.sin(t * 0.2) * 30;
+    camera.lookAt(0, -30, 0);
+
+    // --- 运动模糊：先叠半透明黑遮罩擦除残影，再叠加绘制粒子 ---
+    // 爆破时降低擦除强度 => 拖尾更长
+    fadeMat.opacity = (state === 1 || curBurst > 0.05) ? 0.10 : 0.30;
+    renderer.render(fadeScene, fadeCamera);   // 半透明黑遮罩（不完全擦除）
+    renderer.render(scene, camera);           // 加法混合粒子叠加
+  }
+  animate();
+
+  // ---------------------------------------------------------------------
+  // 自适应
+  // ---------------------------------------------------------------------
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    material.uniforms.uPixelRatio.value = Math.min(window.devicePixelRatio, 2);
+  });
+})();
+</script>
+</body>
+</html>
