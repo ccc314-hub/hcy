@@ -1,879 +1,205 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>第一章：沙之息 // SHADOW OF DUNES</title>
+<title>TARIM BASIN ECOLOGICAL CORRIDOR — 静态粒子底座</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #060608; }
-  #app { position: fixed; inset: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #050608; }
+  #app { position: fixed; inset: 0; z-index: 1; }
   canvas { display: block; }
 
-  /* Motion-blur compositing canvas sits on top of the WebGL canvas */
-  #trailLayer {
-    position: fixed; inset: 0; pointer-events: none; z-index: 1;
+  /* ---- 全息 HUD 覆盖层（z-index 高于 canvas，永不被粒子遮挡）---- */
+  #hud {
+    position: fixed; inset: 0; z-index: 10; pointer-events: none;
+    font-family: "Courier New", ui-monospace, monospace;
+    color: #E5A00D; text-shadow: 0 0 8px rgba(229,160,13,0.4);
   }
+  .hud-title { position: absolute; top: 34px; left: 40px; }
+  .hud-title h1 { font-size: 26px; font-weight: 700; letter-spacing: 3px; }
+  .hud-title .sub { font-size: 13px; letter-spacing: 2px; opacity: 0.85; margin-top: 4px; }
+  .hud-title .sys { font-size: 11px; letter-spacing: 1.5px; opacity: 0.55; margin-top: 6px; }
 
-  #panel {
-    position: fixed;
-    top: 0; right: 0;
-    width: 380px;
-    height: 100%;
-    z-index: 10;
-    background: rgba(10, 10, 15, 0.7);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-    border-left: 1px solid rgba(229, 160, 13, 0.55);
-    box-shadow: -8px 0 40px rgba(229, 160, 13, 0.10),
-                inset 1px 0 18px rgba(229, 160, 13, 0.18);
-    padding: 28px 26px;
-    font-family: "SF Mono", "Consolas", "Menlo", monospace;
-    color: #d8d8e2;
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
-    overflow-y: auto;
-  }
-  #panel::-webkit-scrollbar { width: 6px; }
-  #panel::-webkit-scrollbar-thumb { background: rgba(229,160,13,0.4); border-radius: 3px; }
+  .hud-left { position: absolute; left: 40px; top: 170px; font-size: 12px; letter-spacing: 1px; }
+  .metric { margin-bottom: 20px; }
+  .metric .lbl { opacity: 0.6; font-size: 10px; letter-spacing: 1.5px; }
+  .metric .val { font-size: 24px; font-weight: 700; margin-top: 2px; }
+  .metric .val.green { color: #22C55E; text-shadow: 0 0 10px rgba(34,197,94,0.5); }
+  .metric .tag { font-size: 11px; opacity: 0.8; }
 
-  .hdr {
-    border-bottom: 1px solid rgba(229,160,13,0.35);
-    padding-bottom: 14px;
-  }
-  .section-tag {
-    font-size: 12px;
-    letter-spacing: 3px;
-    color: #E5A00D;
-    text-shadow: 0 0 8px rgba(229,160,13,0.7);
-  }
-  .title-cn {
-    font-size: 26px;
-    font-weight: 700;
-    margin-top: 8px;
-    letter-spacing: 6px;
-    color: #f3e2bd;
-    text-shadow: 0 0 14px rgba(229,160,13,0.55);
-  }
-  .title-en {
-    font-size: 11px;
-    letter-spacing: 4px;
-    margin-top: 4px;
-    color: #8a8a96;
-  }
+  .hud-right { position: absolute; right: 44px; top: 190px; text-align: right; font-size: 12px; letter-spacing: 1px; }
+  .hud-right .lbl { opacity: 0.6; font-size: 10px; letter-spacing: 1.5px; }
+  .hud-right .val { font-size: 16px; margin: 2px 0 16px; }
 
-  .status-line {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 13px;
-    letter-spacing: 2px;
+  .hud-center {
+    position: absolute; top: 44%; left: 50%; transform: translateX(-50%);
+    text-align: center; font-size: 13px; letter-spacing: 2px;
   }
-  .blink {
-    color: #ff2e3e;
-    font-weight: 700;
-    text-shadow: 0 0 10px rgba(255,46,62,0.8);
-    animation: pulse 0.9s infinite;
-  }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
-  .dot {
-    width: 9px; height: 9px; border-radius: 50%;
-    background: #ff2e3e; box-shadow: 0 0 10px #ff2e3e;
-    animation: pulse 0.9s infinite;
-  }
+  .hud-center .belt { font-size: 13px; letter-spacing: 3px; }
+  .hud-center .fix { margin-top: 8px; font-size: 12px; opacity: 0.75; }
+  .hud-center .fixval { font-size: 22px; font-weight: 700; }
+  .hud-center .live { color: #22C55E; text-shadow: 0 0 10px rgba(34,197,94,0.6); }
 
-  .metric {
-    border: 1px solid rgba(229,160,13,0.18);
-    border-radius: 4px;
-    padding: 12px 14px;
-    background: rgba(229,160,13,0.04);
-  }
-  .metric .label {
-    font-size: 10px;
-    letter-spacing: 1.5px;
-    color: #9a9aa6;
-    margin-bottom: 6px;
-  }
-  .metric .label .cn { color: #c6c6d0; }
-  .metric .value {
-    font-size: 22px;
-    font-weight: 700;
-    color: #ff3a48;
-    text-shadow: 0 0 8px rgba(255,58,72,0.6);
-    font-variant-numeric: tabular-nums;
-  }
-  .metric .unit { font-size: 12px; color: #E5A00D; margin-left: 6px; }
-  .metric .note { font-size: 9px; color: #6f6f7a; margin-top: 5px; letter-spacing: 1px; }
-
-  .footer {
-    margin-top: auto;
-    font-size: 10px;
-    letter-spacing: 1.5px;
-    color: #6f6f7a;
-    border-top: 1px solid rgba(229,160,13,0.25);
-    padding-top: 14px;
-    line-height: 1.9;
-  }
-  .footer .key {
-    color: #E5A00D; font-weight: 700;
-  }
-  .grain {
-    position: fixed; inset: 0; pointer-events: none; z-index: 5;
-    background:
-      radial-gradient(circle at 30% 40%, rgba(229,160,13,0.05), transparent 60%),
-      radial-gradient(circle at 70% 70%, rgba(255,46,62,0.03), transparent 60%);
-    mix-blend-mode: screen;
-  }
-
-  /* ===== 第零幕：全息引线 SVG 覆盖层 ===== */
-  #hud-svg {
-    position: fixed; inset: 0; z-index: 22;
-    width: 100%; height: 100%;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.5s ease;
-  }
-  #hud-svg.visible { opacity: 1; }
-  #hud-svg.glitch { animation: hudGlitch 0.12s steps(2) 3; }
-  @keyframes hudGlitch {
-    0%{opacity:1; transform:translateX(0)}
-    50%{opacity:0.3; transform:translateX(3px)}
-    100%{opacity:1; transform:translateX(-2px)}
-  }
-
-  /* ===== 第零幕：悬浮全息照片面板 ===== */
-  #hud-photo {
-    position: fixed; z-index: 23;
-    left: 7%; top: 50%;
-    transform: translateY(-50%);
-    width: 320px;
-    padding: 16px;
-    background: rgba(12,10,6,0.66);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
-    border: 1px solid rgba(229,160,13,0.55);
-    box-shadow: 0 0 26px rgba(229,160,13,0.18), inset 0 0 16px rgba(229,160,13,0.08);
-    font-family: "SF Mono","Consolas","Menlo",monospace;
-    color: #E5A00D;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.5s ease;
-  }
-  #hud-photo.visible { opacity: 1; pointer-events: auto; cursor: pointer; }
-  #hud-photo.flicker { animation: hudFlicker 0.6s steps(3) 1; }
-  @keyframes hudFlicker {
-    0%{opacity:0} 20%{opacity:0.6} 35%{opacity:0.15}
-    55%{opacity:0.9} 70%{opacity:0.35} 100%{opacity:1}
-  }
-  #hud-photo.glitch-out { animation: hudGlitchOut 0.5s ease forwards; }
-  @keyframes hudGlitchOut {
-    0%{opacity:1; transform:translateY(-50%) translateX(0)}
-    25%{opacity:0.5; transform:translateY(-50%) translateX(5px)}
-    45%{opacity:0.7; transform:translateY(-50%) translateX(-6px)}
-    70%{opacity:0.2; transform:translateY(-50%) translateX(3px)}
-    100%{opacity:0; transform:translateY(-50%) translateX(0)}
-  }
-
-  #hud-photo .corner {
-    position: absolute; width: 14px; height: 14px;
-    border: 2px solid #E5A00D;
-  }
-  #hud-photo .corner.tl { top: -1px; left: -1px; border-right: none; border-bottom: none; }
-  #hud-photo .corner.tr { top: -1px; right: -1px; border-left: none; border-bottom: none; }
-  #hud-photo .corner.bl { bottom: -1px; left: -1px; border-right: none; border-top: none; }
-  #hud-photo .corner.br { bottom: -1px; right: -1px; border-left: none; border-top: none; }
-
-  .photo-head {
-    display: flex; justify-content: space-between; align-items: center;
-    font-size: 10px; letter-spacing: 1.5px; margin-bottom: 10px;
-  }
-  .photo-head .ph-tag { color: #ff3a48; text-shadow: 0 0 8px rgba(255,58,72,0.7); }
-  .photo-head .ph-coord { color: #E5A00D; }
-
-  #imgContainer {
-    position: relative;
-    height: 190px;
-    overflow: hidden;
-    border: 1px solid rgba(229,160,13,0.4);
-    /* 程序化金色噪点 + 网格，代替真实照片，避免跨域 */
-    background:
-      repeating-linear-gradient(90deg, rgba(229,160,13,0.05) 0 1px, transparent 1px 22px),
-      repeating-linear-gradient(0deg, rgba(229,160,13,0.05) 0 1px, transparent 1px 22px),
-      radial-gradient(circle at 40% 35%, rgba(160,120,40,0.5), transparent 55%),
-      radial-gradient(circle at 65% 70%, rgba(110,80,30,0.45), transparent 60%),
-      linear-gradient(135deg, #2a2010, #161008);
-    background-blend-mode: screen, screen, normal, normal, normal;
-  }
-  #imgContainer::before {
-    /* 噪点动画 */
-    content: ""; position: absolute; inset: 0;
-    background-image: radial-gradient(rgba(229,160,13,0.35) 1px, transparent 1px);
-    background-size: 3px 3px;
-    opacity: 0.25;
-    animation: noiseShift 0.4s steps(4) infinite;
-  }
-  @keyframes noiseShift {
-    0%{background-position:0 0} 25%{background-position:1px 2px}
-    50%{background-position:2px 1px} 75%{background-position:1px 0} 100%{background-position:0 1px}
-  }
-  #imgContainer .scanbar {
-    position: absolute; left: 0; right: 0; height: 36px;
-    background: linear-gradient(to bottom, transparent, rgba(229,160,13,0.28), transparent);
-    animation: scanSweep 2.6s linear infinite;
-  }
-  @keyframes scanSweep { 0%{top:-36px} 100%{top:190px} }
-  #imgContainer .decode-text {
-    position: absolute; bottom: 8px; left: 0; right: 0; text-align: center;
-    font-size: 11px; letter-spacing: 2px; color: #E5A00D;
-    text-shadow: 0 0 8px rgba(229,160,13,0.8);
-  }
-  .decode-text .ell { animation: ell 1.1s steps(4) infinite; }
-  @keyframes ell { 0%{opacity:0.2} 50%{opacity:1} 100%{opacity:0.2} }
-
-  .photo-foot {
-    font-size: 9px; letter-spacing: 1.2px; color: rgba(229,160,13,0.65);
-    margin-top: 9px;
-  }
-
-  #enterBtn {
-    display: block; width: 100%; margin-top: 14px;
-    padding: 11px 0;
-    background: rgba(229,160,13,0.10);
-    border: 1px solid #E5A00D;
-    color: #E5A00D;
-    font-family: inherit; font-size: 12px; letter-spacing: 3px;
-    cursor: pointer;
-    text-shadow: 0 0 8px rgba(229,160,13,0.7);
-    animation: btnBreath 1.6s ease-in-out infinite;
-    transition: background 0.2s ease;
-  }
-  #enterBtn:hover { background: rgba(229,160,13,0.26); }
-  @keyframes btnBreath {
-    0%,100%{ box-shadow: 0 0 6px rgba(229,160,13,0.3); opacity:0.78 }
-    50%{ box-shadow: 0 0 20px rgba(229,160,13,0.7); opacity:1 }
-  }
-
-  /* 能量解体白闪（地球崩解瞬间） */
-  #flash {
-    position: fixed; inset: 0; z-index: 30;
-    pointer-events: none;
-    background: radial-gradient(circle at center,
-      rgba(255,238,200,1) 0%, rgba(229,160,13,0.9) 35%, rgba(229,160,13,0) 75%);
-    opacity: 0;
-  }
-
-  /* 第零幕期间 UI 面板锁定（变暗 + 不可交互） */
-  #panel.locked {
-    opacity: 0.45;
-    filter: grayscale(0.3) brightness(0.7);
-    pointer-events: none;
-    transition: opacity 0.8s ease, filter 0.8s ease;
+  .hud-foot {
+    position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
+    font-size: 10px; letter-spacing: 2px; opacity: 0.5; text-align: center;
   }
 </style>
 </head>
 <body>
 <div id="app"></div>
-<div class="grain"></div>
 
-<!-- 第零幕：能量解体白闪 -->
-<div id="flash"></div>
-
-<!-- 第零幕：3D→2D 全息引线 SVG 覆盖层 -->
-<svg id="hud-svg" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <filter id="lineGlow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="2.4" result="b"/>
-      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter>
-  </defs>
-  <circle id="anchorDot" r="4" fill="#E5A00D" filter="url(#lineGlow)"/>
-  <circle id="anchorRing" r="11" fill="none" stroke="#E5A00D" stroke-width="1" opacity="0.8"/>
-  <polyline id="leaderLine" fill="none" stroke="#E5A00D" stroke-width="1.4" filter="url(#lineGlow)"/>
-</svg>
-
-<!-- 第零幕：悬浮全息照片面板 -->
-<div id="hud-photo">
-  <div class="corner tl"></div><div class="corner tr"></div>
-  <div class="corner bl"></div><div class="corner br"></div>
-  <div class="photo-head">
-    <span class="ph-tag">TARGET ACQUIRED</span>
-    <span class="ph-coord">39.0&deg;N · 82.5&deg;E</span>
-  </div>
-  <div id="imgContainer">
-    <div class="scanbar"></div>
-    <div class="decode-text">[ DESERT IMAGE DECODING<span class="ell">...</span> ]</div>
-  </div>
-  <div class="photo-foot">TARIM BASIN // KUMTAG-TAKLAMAKAN CONVERGENCE</div>
-  <button id="enterBtn">[ CLICK TO ENTER CHAPTER 1 ]</button>
-</div>
-
-<div id="panel" class="locked">
-  <div class="hdr">
-    <div class="section-tag">SECTION: 01 // SHADOW OF DUNES</div>
-    <div class="title-cn">沙 之 息</div>
-    <div class="title-en">DIGITAL TWIN · TARIM BASIN</div>
+<div id="hud">
+  <div class="hud-title">
+    <h1>TARIM BASIN ECOLOGICAL CORRIDOR</h1>
+    <div class="sub">XINJIANG, CHINA · ECO-RESTORATION LIVE FEED</div>
+    <div class="sys">SAT-DRONE HYBRID MONITORING SYSTEM</div>
   </div>
 
-  <div class="status-line">
-    <span class="dot"></span>
-    <span>SYSTEM STATUS:</span>
-    <span class="blink">ECO-CRISIS [ALERT]</span>
+  <div class="hud-left">
+    <div class="metric"><div class="lbl">VEGETATION DENSITY · NDVI</div><div class="val green" id="m-ndvi">0.78</div></div>
+    <div class="metric"><div class="lbl">WATER QUALITY INDEX</div><div class="tag">EXCELLENT</div><div class="val" id="m-wqi">91.6</div></div>
+    <div class="metric"><div class="lbl">SOIL MOISTURE</div><div class="tag">OPTIMAL</div><div class="val" id="m-soil">64.3%</div></div>
+    <div class="metric"><div class="lbl">WIND EROSION RISK</div><div class="tag">LOW</div><div class="val" id="m-wind">12.7%</div></div>
   </div>
 
-  <div class="metric">
-    <div class="label"><span class="cn">最大风速</span> / Max Wind Speed</div>
-    <div><span class="value" id="m-wind">14.0</span><span class="unit">m/s</span></div>
-    <div class="note">盆地南缘特强沙尘暴实测 [9.8 ~ 18.2]</div>
+  <div class="hud-right">
+    <div class="lbl">COORDINATES</div><div class="val">40.2722&deg; N<br>86.1827&deg; E</div>
+    <div class="lbl">ALTITUDE</div><div class="val" id="m-alt">1528.6 m</div>
+    <div class="lbl">FLOW RATE</div><div class="val" id="m-flow">128 m&sup3;/s</div>
   </div>
 
-  <div class="metric">
-    <div class="label"><span class="cn">表层土壤含水率</span> / Soil Moisture</div>
-    <div><span class="value" id="m-moist">2.50</span><span class="unit">%</span></div>
-    <div class="note">台特玛湖干涸荒漠区实测 [2.0 ~ 3.0]</div>
+  <div class="hud-center">
+    <div class="belt">POPULUS EUPHRATICA FOREST BELT</div>
+    <div class="fix">FIXATION EFFICIENCY</div>
+    <div><span class="fixval" id="m-fix">82.4%</span> <span class="live">// LIVE</span></div>
   </div>
 
-  <div class="metric">
-    <div class="label"><span class="cn">风沙侵蚀扩张速率</span> / Expansion Rate</div>
-    <div><span class="value" id="m-expand">4.00</span><span class="unit">m/year</span></div>
-    <div class="note">库姆塔格与塔克拉玛干合拢推进 [3.0 ~ 5.0]</div>
-  </div>
-
-  <div class="footer">
-    <div><span class="key">[ MOUSE ]</span> 流体漩涡排斥 / Vortex Repel</div>
-    <div><span class="key">[ SPACE ]</span> 径向爆破 ↔ 引力凝聚</div>
-    <div style="margin-top:8px; color:#4a4a55;">VERTICES: 90,000 · CURL-NOISE FLOW FIELD</div>
-  </div>
+  <div class="hud-foot">DATA SOURCE · CHINA ECOLOGICAL ENVIRONMENT MONITORING CENTER</div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
-/* =========================================================================
-   第一章：沙之息  —  3D 塔里木盆地数字孪生点云 / Curl-Noise 流沙危机
-   纯单文件 · 无外部资源 · 手写 RawShader 级 ShaderMaterial
-   ========================================================================= */
-
 (function () {
-  'use strict';
-
-  const container = document.getElementById('app');
-
-  // ---------------------------------------------------------------------
-  // 渲染器：保留缓冲区以利用 WebGL 不完全擦除特性拉出运动模糊尾迹
-  // ---------------------------------------------------------------------
-  const renderer = new THREE.WebGLRenderer({
-    antialias: true,
-    alpha: false,
-    preserveDrawingBuffer: true   // 关键：运动模糊残影
-  });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setClearColor(0x060608, 1);
-  renderer.autoClearColor = false; // 我们手动用半透明黑遮罩擦除
-  container.appendChild(renderer.domElement);
+  // =====================================================================
+  // 静态 3D 粒子盆地底座 —— 像素级复刻塔里木生态走廊参考图
+  //   无任何鼠标交互 / FBO 遮罩 / 转场逻辑，纯数学 + 分形噪声格式化。
+  // =====================================================================
 
   const scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x050608, 0.00016);
 
-  const camera = new THREE.PerspectiveCamera(
-    52, window.innerWidth / window.innerHeight, 0.1, 8000   // Far 裁剪面调大，覆盖全景
-  );
-  // 第零幕起始：宇宙宏观视角，相机远悬注视地球（原点）
-  camera.position.set(0, 240, 2600);
-  camera.lookAt(0, 0, 0);
+  const camera = new THREE.PerspectiveCamera(52, innerWidth / innerHeight, 1, 12000);
+  camera.position.set(0, 760, 1500);
+  camera.lookAt(0, 30, -220);
 
-  // ---------------------------------------------------------------------
-  // 内联自包含 OrbitControls（不依赖任何外部文件，避免跨域）
-  // 支持：左键拖拽 360° 环绕 · 滚轮缩放 · 自动阻尼
-  // target 锁定盆地中心 (0,0,0)，永远以全景为核心环绕，无穿模
-  // ---------------------------------------------------------------------
-  function MiniOrbitControls(cam, dom) {
-    this.target = new THREE.Vector3(0, 0, 0);
-    this.minDistance = 600;
-    this.maxDistance = 4500;
-    this.minPolar = 0.15;                 // 防止从正上方/正下方穿模
-    this.maxPolar = Math.PI * 0.49;
-    this.damping = 0.08;
-    this.rotateSpeed = 0.9;
-    this.zoomSpeed = 1.0;
-    this.autoRotate = true;               // 默认缓慢自转，宏观环绕
-    this.autoRotateSpeed = 0.18;          // 弧度/秒
-    this.enabled = false;                 // 第零幕期间禁用，转场结束后启用
-
-    const offset = new THREE.Vector3();
-    const spherical = new THREE.Spherical();
-    const sphericalDelta = new THREE.Spherical(0, 0, 0);
-    let scale = 1;
-    let isDragging = false;
-    let px = 0, py = 0;
-    let lastUserInteract = 0;
-
-    // 初始化球坐标
-    offset.copy(cam.position).sub(this.target);
-    spherical.setFromVector3(offset);
-
-    const self = this;
-
-    // 转场结束时，从相机当前位姿同步球坐标，确保无缝接管不跳变
-    this.syncFromCamera = function () {
-      offset.copy(cam.position).sub(this.target);
-      spherical.setFromVector3(offset);
-      sphericalDelta.set(0, 0, 0);
-      scale = 1;
-      lastUserInteract = performance.now();
-    };
-
-    function onDown(e) {
-      if (!self.enabled || e.button !== 0) return;
-      isDragging = true;
-      px = e.clientX; py = e.clientY;
-      lastUserInteract = performance.now();
-    }
-    function onMove(e) {
-      if (!self.enabled || !isDragging) return;
-      const dx = e.clientX - px;
-      const dy = e.clientY - py;
-      px = e.clientX; py = e.clientY;
-      sphericalDelta.theta -= (2 * Math.PI * dx / dom.clientHeight) * self.rotateSpeed;
-      sphericalDelta.phi   -= (2 * Math.PI * dy / dom.clientHeight) * self.rotateSpeed;
-      lastUserInteract = performance.now();
-    }
-    function onUp() { isDragging = false; }
-    function onWheel(e) {
-      if (!self.enabled) return;
-      e.preventDefault();
-      const f = Math.pow(0.95, self.zoomSpeed);
-      if (e.deltaY < 0) scale *= f; else scale /= f;
-      lastUserInteract = performance.now();
-    }
-
-    dom.addEventListener('mousedown', onDown);
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    dom.addEventListener('wheel', onWheel, { passive: false });
-
-    this.update = function (dt) {
-      if (!this.enabled) return;   // 转场期间相机由脚本轨迹接管
-      // 闲置 2.5s 后恢复自动环绕
-      if (this.autoRotate && (performance.now() - lastUserInteract > 2500) && !isDragging) {
-        sphericalDelta.theta -= this.autoRotateSpeed * dt;
-      }
-
-      spherical.theta += sphericalDelta.theta;
-      spherical.phi   += sphericalDelta.phi;
-      spherical.phi    = Math.max(this.minPolar, Math.min(this.maxPolar, spherical.phi));
-      spherical.makeSafe();
-
-      spherical.radius *= scale;
-      spherical.radius = Math.max(this.minDistance, Math.min(this.maxDistance, spherical.radius));
-
-      offset.setFromSpherical(spherical);
-      cam.position.copy(this.target).add(offset);
-      cam.lookAt(this.target);
-
-      // 阻尼衰减
-      sphericalDelta.theta *= (1 - this.damping);
-      sphericalDelta.phi   *= (1 - this.damping);
-      scale = 1;
-    };
-  }
-
-  const controls = new MiniOrbitControls(camera, renderer.domElement);
-  controls.target.set(0, 0, 0);   // 盆地中心为环绕核心
-
-  // 半透明黑遮罩场景（用于绘制运动模糊残影衰减层）
-  const fadeScene = new THREE.Scene();
-  const fadeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-  const fadeMat = new THREE.MeshBasicMaterial({
-    color: 0x060608,
-    transparent: true,
-    opacity: 0.22,            // 默认每帧擦除强度
-    depthTest: false,
-    depthWrite: false
-  });
-  const fadeQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), fadeMat);
-  fadeScene.add(fadeQuad);
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setClearColor(0x050608, 1);
+  document.getElementById('app').appendChild(renderer.domElement);
 
   // ---------------------------------------------------------------------
-  // 程序化地形点云：50000+ 顶点（此处 300x300 = 90000）
-  // 盆地数字孪生：四周山脉隆起 + 中心塌陷
+  // 1) 程序化噪声工具（JS 端：划分 aIdentity 与河道走向）
   // ---------------------------------------------------------------------
-  const GRID = 300;                       // 300 * 300 = 90,000 顶点
-  const COUNT = GRID * GRID;
-  const SPAN = 900;                        // 世界尺度
-  const SPAN_X = SPAN * 1.45;              // 盆地东西向更长（透镜状），匹配遥感图
-  const SPAN_Z = SPAN * 1.0;
-
-  const positions = new Float32Array(COUNT * 3);
-  const aRandom   = new Float32Array(COUNT * 3); // 每粒子随机参数（爆破方向/相位）
-  const aSpeed    = new Float32Array(COUNT);     // 流场速度差异
-  const aZone     = new Float32Array(COUNT);     // 0=盆地沙尘 1=雪山脊（驱动冷/暖配色）
-  const aDust     = new Float32Array(COUNT);     // 沙尘羽流密度（驱动亮度/不透明梯度）
-  const aSphere   = new Float32Array(COUNT * 3); // 第零幕：全息粒子地球的球坐标位置
-  const aLand     = new Float32Array(COUNT);     // 0=海洋 1=陆地（驱动地球冷暖配色）
-  const aTerrain  = new Float32Array(COUNT);     // 地表类型：0海 0.3沙漠 0.6植被 0.85山地 1.0冰雪
-  const aRandomDelay = new Float32Array(COUNT);  // 转场坠落延迟（0..1），制造淅沥层次感
-  const aColorEarth = new Float32Array(COUNT * 3); // 第零幕：程序化地球本色（RGB）
-
-  // --- JS 端 fractal noise（用于地形基底高度 + BoundingBox 居中）---
-  // 经典 value-noise + fBm，纯数学、无外部依赖
-  function hash2(x, y) {
-    let h = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
-    return h - Math.floor(h);
-  }
+  function hash2(x, y) { const v = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return v - Math.floor(v); }
   function vnoise(x, y) {
-    const xi = Math.floor(x), yi = Math.floor(y);
-    const xf = x - xi, yf = y - yi;
-    const u = xf * xf * (3 - 2 * xf);
-    const v = yf * yf * (3 - 2 * yf);
-    const a = hash2(xi, yi);
-    const b = hash2(xi + 1, yi);
-    const c = hash2(xi, yi + 1);
-    const d = hash2(xi + 1, yi + 1);
+    const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+    const a = hash2(xi, yi), b = hash2(xi + 1, yi), c = hash2(xi, yi + 1), d = hash2(xi + 1, yi + 1);
     return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
   }
-  function fbm(x, y) {
-    let val = 0, amp = 0.5, freq = 1.0;
-    for (let o = 0; o < 6; o++) {
-      val += amp * vnoise(x * freq, y * freq);
-      freq *= 2.0;
-      amp *= 0.5;
-    }
-    return val;
-  }
-  // JS 版 smoothstep（GLSL 内置函数在 JS 中不存在，需手动实现）
-  function smoothstep(e0, e1, x) {
-    const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0)));
-    return t * t * (3 - 2 * t);
-  }
-
-  // 透镜状盆地的「等效半径」：x 方向压缩 => 椭圆轮廓（东西长、南北短）
-  // 并对长轴做轻微旋转，呼应真实塔里木盆地的走向
-  function lensRadius(nx, nz) {
-    const ang = -0.18;                         // 长轴轻微倾斜
-    const rx = nx * Math.cos(ang) - nz * Math.sin(ang);
-    const rz = nx * Math.sin(ang) + nz * Math.cos(ang);
-    const ex = rx * 0.74;                       // x 轴压缩 => 椭圆
-    const ez = rz * 1.06;
-    return Math.sqrt(ex * ex + ez * ez);
-  }
-
-  // 盆地高度函数：四周雪山脊隆起、中心沙尘盆地塌陷（透镜形）
-  function basinHeight(nx, nz) {
-    const r = Math.min(lensRadius(nx, nz), 1.0);
-    // 碗状塌陷：中心低，边缘高（昆仑 / 天山 环抱）
-    const bowl = Math.pow(r, 2.3) * 240.0 - 70.0;
-    // 雪山脊线：外缘剧烈抬升，并叠加锯齿状脊背噪声
-    const ridgeBase = Math.pow(Math.max(r - 0.5, 0.0), 1.5) * 360.0;
-    const ridgeJag  = Math.max(r - 0.55, 0.0) * (fbm(nx * 6.0 + 11.0, nz * 6.0 + 7.0) - 0.5) * 420.0;
-    // 盆地内部沙丘细节（仅中心明显）
-    const detail = (fbm((nx + 1) * 3.2, (nz + 1) * 3.2) - 0.5) * 70.0 * (1.0 - r);
-    const dunes  = Math.sin(nx * 16.0) * Math.cos(nz * 13.0) * 10.0 * (1.0 - r);
-    return bowl + ridgeBase + ridgeJag + detail + dunes;
-  }
+  function fbm(x, y) { let s = 0, a = 0.5, f = 1; for (let o = 0; o < 5; o++) { s += a * vnoise(x * f, y * f); f *= 2; a *= 0.5; } return s; }
 
   // ---------------------------------------------------------------------
-  // 第零幕：全息粒子地球 —— 球坐标 + 程序化大陆掩膜（陆/海）
-  // 共用同一批顶点（粒子守恒）：每个粒子既有盆地坐标(position)，也有地球坐标(aSphere)
+  // 2) 几何体：PlaneGeometry 网格顶点载体（密度调高）
   // ---------------------------------------------------------------------
-  const GLOBE_R = 620.0;                 // 粒子地球半径
-  // 塔里木盆地落点：Lat 39.0°N, Lon 82.5°E
-  const TARIM_LAT = 39.0 * Math.PI / 180.0;
-  const TARIM_LON = 82.5 * Math.PI / 180.0;
-  // 经纬度 → 单位球向量（y 为极轴）
-  function latLonToVec(lat, lon) {
-    return [
-      Math.cos(lat) * Math.cos(lon),
-      Math.sin(lat),
-      Math.cos(lat) * Math.sin(lon)
-    ];
-  }
-  const TARIM_DIR = latLonToVec(TARIM_LAT, TARIM_LON);
+  const GRID = 340;                       // 340 * 340 = 115,600 顶点
+  const COUNT = GRID * GRID;
+  const SPAN_X = 2800;
+  const SPAN_Z = 2800;
 
-  /* ===== 真实世界大陆掩膜（等距圆柱投影，36 行纬 × 72 列经）=====
-     '#'=陆地 '.'=海洋。手工低分绘制，使旋转地球可辨识（非洲/欧亚/美洲/大洋洲），
-     塔里木落点(39N,82.5E)正落在欧亚大陆腹地。
-     行 0 = 90°N(北极)，行 35 = 90°S(南极)；列 0 = 180°W，列 71 = 175°E。 */
-  const WORLD_MAP = [
-    "........................................................................", // 90N
-    "...........#####........................................................",
-    ".......############......................#####..........................",
-    "......################...........###############........................",
-    "....###################........#######################..................",
-    "....####################......##########################.......##.......", // ~60N
-    ".....##################.....#############################.....####.......",
-    "......###############......###############################...#####.......",
-    ".......############.......#################################..####........",
-    "........##########.......###################################.###.........",
-    "........#########.......#####################################............", // ~40N  ← 塔里木带
-    ".........#######.......######################################...#####....",
-    "..........#####.......#######################################..#######....",
-    "..........####.......#####...###############################..######.....",
-    "...........###.......###......###########################....####........", // ~20N
-    "............##........#........####.######...##########.......##.........",
-    ".............#.................###...####.....########..........#........",
-    ".............##................##.....#.......######....................", // 0 赤道
-    ".............###...............###............#####.....................",
-    "..............####.............####...........####......................",
-    "..............#####............#####..........###.......................", // ~20S
-    "...............#####...........######.........##........................",
-    "...............#####...........######.........#.....######..............",
-    "................####...........#####...............##########...........",
-    "................###............####...............###########...........", // ~40S
-    ".................##............###.................#########.............",
-    ".................##............##..................###.##................",
-    "..................#............#........................................",
-    "...............................#........................................", // ~60S
-    "........................................................................",
-    "........................................................................",
-    "....###...####....######...####....###....#####....####....###..........", // 南极洲带
-    "..######################################################################",
-    "..######################################################################",
-    "...####################################################################.",
-    "........................................................................"  // 90S
-  ];
-  const MAP_ROWS = WORLD_MAP.length;     // 36
-  const MAP_COLS = WORLD_MAP[0].length;  // 72
+  const positions = new Float32Array(COUNT * 3);
+  const aIdentity = new Float32Array(COUNT);
+  const aRand     = new Float32Array(COUNT);
+  const aRiver    = new Float32Array(COUNT);
 
-  // 采样世界地图：双线性插值 + 噪声扰动海岸线 => 自然有机的大陆轮廓（无方块感）
-  function mapAt(rr, cc) {
-    rr = Math.max(0, Math.min(MAP_ROWS - 1, rr));
-    cc = ((cc % MAP_COLS) + MAP_COLS) % MAP_COLS;
-    return WORLD_MAP[rr][cc] === '#' ? 1.0 : 0.0;
-  }
-  function landMask(lat, lon) {
-    let latDeg = lat * 180.0 / Math.PI;
-    let lonDeg = lon * 180.0 / Math.PI;
-    lonDeg = ((lonDeg + 180.0) % 360.0 + 360.0) % 360.0 - 180.0;
-
-    // 海岸线噪声扰动：在采样坐标上叠加 fbm，使网格边界被打碎成不规则海岸
-    const warp = (fbm(lonDeg * 0.18 + 40.0, latDeg * 0.18 + 40.0) - 0.5) * 2.4;
-    const warp2 = (fbm(lonDeg * 0.42 + 70.0, latDeg * 0.42 + 70.0) - 0.5) * 1.1;
-    const rowF = (90.0 - latDeg) / 180.0 * (MAP_ROWS - 1) + warp + warp2;
-    const colF = (lonDeg + 180.0) / 360.0 * MAP_COLS + warp * 1.3 + warp2;
-
-    // 双线性插值（连续过渡，消除方块阶梯）
-    const r0 = Math.floor(rowF), c0 = Math.floor(colF);
-    const fr = rowF - r0, fc = colF - c0;
-    const v00 = mapAt(r0, c0),     v10 = mapAt(r0, c0 + 1);
-    const v01 = mapAt(r0 + 1, c0), v11 = mapAt(r0 + 1, c0 + 1);
-    const top = v00 * (1 - fc) + v10 * fc;
-    const bot = v01 * (1 - fc) + v11 * fc;
-    return top * (1 - fr) + bot * fr;   // 0..1 陆地比例（平滑）
+  // 蜿蜒河道中心轴（JS 与 Shader 必须完全一致）
+  function riverCenterX(nz) {
+    return Math.sin(nz * 2.1 + 0.6) * 360
+         + Math.sin(nz * 0.9 - 1.2) * 220
+         + (fbm(nz * 1.6 + 3.0, 7.0) - 0.5) * 300;
   }
 
-  /* 地表类型分类（依真实地球航拍配色）：
-     返回 0=海洋, 0.3=沙漠(沙黄), 0.6=植被(绿), 0.85=山地(棕), 1.0=冰雪(白)
-     依据：纬度（极区/高纬→冰雪）、沙漠带（北非~阿拉伯~中亚塔里木）、噪声分植被/山地 */
-  function terrainType(lat, lon) {
-    const land = landMask(lat, lon);
-    if (land < 0.35) return 0.0;                  // 海洋
-    const latDeg = lat * 180.0 / Math.PI;
-    let lonDeg = lon * 180.0 / Math.PI;
-    lonDeg = ((lonDeg + 180.0) % 360.0 + 360.0) % 360.0 - 180.0;
-    const absLat = Math.abs(latDeg);
+  let idx = 0;
+  for (let iz = 0; iz < GRID; iz++) {
+    for (let ix = 0; ix < GRID; ix++) {
+      const nx = ix / (GRID - 1) - 0.5;
+      const nz = iz / (GRID - 1) - 0.5;
+      const wx = nx * SPAN_X;
+      const wz = nz * SPAN_Z;
 
-    // 极地/高纬冰雪冠
-    if (absLat > 72.0) return 1.0;
-    if (absLat > 60.0 && fbm(lonDeg * 0.05 + 3.0, latDeg * 0.08) > 0.45) return 1.0;
+      positions[idx * 3 + 0] = wx;
+      positions[idx * 3 + 1] = 0;
+      positions[idx * 3 + 2] = wz;
 
-    // 沙漠带：北纬 15~42° 且经度落在北非—阿拉伯—中亚（含塔里木）
-    const inDesertLon = (lonDeg > -18.0 && lonDeg < 115.0);
-    const desertCore = Math.exp(-Math.pow((latDeg - 26.0) / 16.0, 2.0));
-    const tarimCore  = Math.exp(-(Math.pow((latDeg - 39.0)/7.0, 2.0) + Math.pow((lonDeg - 82.5)/14.0, 2.0)));
-    const desertNoise = fbm(lonDeg * 0.06 + 11.0, latDeg * 0.09 + 4.0);
-    if ((inDesertLon && desertCore > 0.5 && desertNoise > 0.42) || tarimCore > 0.4) {
-      return 0.3;                                 // 沙漠
-    }
+      const cx = riverCenterX(nz);
+      const edgeJit = (fbm(nx * 6.0 + 11.0, nz * 6.0 + 4.0) - 0.5) * 360;
+      const distToRiver = Math.abs(wx - cx + edgeJit);
+      const rNorm = Math.min(1, distToRiver / 1150);
+      aRiver[idx] = rNorm;
 
-    // 高山带（喜马拉雅/高海拔）：用噪声制造少量山地棕 + 雪顶
-    const mtn = fbm(lonDeg * 0.11 + 20.0, latDeg * 0.13 + 7.0);
-    if (mtn > 0.62) return (mtn > 0.74) ? 1.0 : 0.85;   // 雪顶 / 山地
+      let id;
+      if (rNorm < 0.14)      id = 0.10;
+      else if (rNorm < 0.50) id = 0.20 + (rNorm - 0.14) / 0.36 * 0.38;
+      else                   id = 0.62 + (rNorm - 0.50) / 0.50 * 0.38;
+      aIdentity[idx] = id;
 
-    return 0.6;                                   // 植被绿
-  }
-
-  /* 程序化地球本色（无贴图）：依地表类型 + 3D 噪声计算每个粒子 RGB
-     海洋 #001A33 深蓝 / 青蓝；陆地 森林绿 #1A3300 ~ 黄褐；极地 纯白。 */
-  function earthColor(lat, lon, ttype) {
-    // 噪声扰动（让同类地表有自然色彩变化，避免死板纯色）
-    const cx = Math.cos(lat) * Math.cos(lon);
-    const cy = Math.sin(lat);
-    const cz = Math.cos(lat) * Math.sin(lon);
-    const n = fbm(cx * 3.0 + 50.0, cz * 3.0 + 50.0);   // 0..1
-    let r, g, b;
-    if (ttype < 0.15) {
-      // 海洋：深蓝 #001A33 → 青蓝，按噪声深浅
-      const deep = [0.0, 0.10, 0.20];   // #001A33
-      const shallow = [0.04, 0.30, 0.45];
-      const k = n;
-      r = deep[0] + (shallow[0]-deep[0])*k;
-      g = deep[1] + (shallow[1]-deep[1])*k;
-      b = deep[2] + (shallow[2]-deep[2])*k;
-    } else if (ttype < 0.45) {
-      // 沙漠：黄褐
-      r = 0.62 + n*0.18; g = 0.50 + n*0.14; b = 0.28 + n*0.08;
-    } else if (ttype < 0.72) {
-      // 植被：森林绿 #1A3300 → 较亮绿
-      const dark = [0.10, 0.20, 0.0];   // #1A3300
-      const lite = [0.22, 0.42, 0.12];
-      const k = n;
-      r = dark[0] + (lite[0]-dark[0])*k;
-      g = dark[1] + (lite[1]-dark[1])*k;
-      b = dark[2] + (lite[2]-dark[2])*k;
-    } else if (ttype < 0.92) {
-      // 山地：棕褐
-      r = 0.42 + n*0.12; g = 0.33 + n*0.10; b = 0.24 + n*0.07;
-    } else {
-      // 极地/冰雪：纯白
-      r = 0.90 + n*0.08; g = 0.93 + n*0.06; b = 0.97;
-    }
-    return [r, g, b];
-  }
-
-  const GOLDEN = Math.PI * (3.0 - Math.sqrt(5.0)); // 斐波那契球黄金角
-
-  let i3 = 0;
-  for (let ix = 0; ix < GRID; ix++) {
-    for (let iz = 0; iz < GRID; iz++) {
-      const u = ix / (GRID - 1);
-      const v = iz / (GRID - 1);
-      const x = (u - 0.5) * SPAN_X;
-      const z = (v - 0.5) * SPAN_Z;
-      const nx = (u - 0.5) * 2.0;
-      const nz = (v - 0.5) * 2.0;
-      const y = basinHeight(nx, nz);
-
-      positions[i3 + 0] = x;
-      positions[i3 + 1] = y;
-      positions[i3 + 2] = z;
-
-      // 区带：透镜半径 0.5~0.85 区间从盆地过渡到雪山脊
-      const r = lensRadius(nx, nz);
-      let zone = (r - 0.52) / 0.33;             // 0 盆地 .. 1 雪山
-      zone = Math.max(0.0, Math.min(1.0, zone));
-      // 脊背噪声让雪线参差（雪舌沿山谷下伸）
-      zone = Math.max(0.0, Math.min(1.0, zone + (fbm(nx * 5.0, nz * 5.0) - 0.5) * 0.55));
-      aZone[Math.floor(i3 / 3)] = zone;
-
-      // 沙尘羽流：中心浓、向边缘渐薄的旋涡密度场（匹配遥感图中央亮沙尘沉积）
-      const plumeCx = 0.05, plumeCz = 0.02;     // 羽流中心几乎居中
-      const pdx = nx - plumeCx, pdz = nz - plumeCz;
-      const pr = Math.sqrt(pdx*pdx + pdz*pdz);
-      const swirl = Math.atan2(pdz, pdx) * 1.5 + pr * 3.0;
-      let dust = fbm(nx * 2.2 + Math.cos(swirl)*0.6 + 30.0,
-                     nz * 2.2 + Math.sin(swirl)*0.6 + 30.0);
-      // 中心明亮沙尘沉积：随到中心距离衰减
-      dust = dust * (1.0 - Math.min(pr * 0.85, 1.0)) + 0.25;
-      // 干涸河道暗纹：细长低密度沟壑横切沙尘（遥感图中的河网脉络）
-      const vein = Math.abs(Math.sin(nx * 7.0 + nz * 4.0 + fbm(nx*3.0, nz*3.0) * 6.0));
-      dust *= (0.7 + 0.3 * smoothstep(0.0, 0.25, vein));
-      dust = Math.pow(Math.max(dust, 0.0), 1.1);
-      dust *= (1.0 - zone);                      // 雪山区无沙尘
-      aDust[Math.floor(i3 / 3)] = Math.max(0.0, Math.min(1.0, dust * 1.35));
-
-      // 随机爆破方向（球面均匀分布）
-      const theta = hash2(ix * 1.3, iz * 2.7) * Math.PI * 2.0;
-      const phi   = Math.acos(2.0 * hash2(ix * 3.1 + 5.0, iz * 1.7 + 2.0) - 1.0);
-      aRandom[i3 + 0] = Math.sin(phi) * Math.cos(theta);
-      aRandom[i3 + 1] = Math.cos(phi);
-      aRandom[i3 + 2] = Math.sin(phi) * Math.sin(theta);
-
-      aSpeed[Math.floor(i3 / 3)] = 0.4 + hash2(ix * 0.7, iz * 0.9) * 1.6;
-
-      // --- 第零幕：斐波那契球均匀铺点（同一索引 => 粒子守恒）---
-      const pIdx = Math.floor(i3 / 3);
-      const sy = 1.0 - (pIdx / (COUNT - 1)) * 2.0;   // y: 1 .. -1
-      const sr = Math.sqrt(Math.max(0.0, 1.0 - sy * sy));
-      const sTheta = GOLDEN * pIdx;
-      const sx = Math.cos(sTheta) * sr;
-      const sz = Math.sin(sTheta) * sr;
-      // 地球半径上叠加微小起伏（陆地略高、海洋略低），呈全息地表质感
-      const slat = Math.asin(Math.max(-1.0, Math.min(1.0, sy)));
-      const slon = Math.atan2(sz, sx);
-      const land = landMask(slat, slon);
-      const relief = 1.0 + (land - 0.5) * 0.04;
-      aSphere[i3 + 0] = sx * GLOBE_R * relief;
-      aSphere[i3 + 1] = sy * GLOBE_R * relief;
-      aSphere[i3 + 2] = sz * GLOBE_R * relief;
-      aLand[pIdx] = land;
-      aTerrain[pIdx] = terrainType(slat, slon);
-      const ec = earthColor(slat, slon, aTerrain[pIdx]);
-      aColorEarth[i3 + 0] = ec[0];
-      aColorEarth[i3 + 1] = ec[1];
-      aColorEarth[i3 + 2] = ec[2];
-      // 坠落延迟：随机 + 略受纬度影响（高处先落），制造大雨倾盆的层次
-      aRandomDelay[pIdx] = Math.min(1.0, Math.max(0.0,
-        hash2(ix * 2.3 + 9.0, iz * 1.9 + 4.0) * 0.85 + (1.0 - (sy * 0.5 + 0.5)) * 0.15));
-
-      i3 += 3;
+      aRand[idx] = hash2(ix * 1.7 + 2.0, iz * 2.3 + 5.0);
+      idx++;
     }
   }
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute('aRandom',  new THREE.BufferAttribute(aRandom, 3));
-  geometry.setAttribute('aSpeed',   new THREE.BufferAttribute(aSpeed, 1));
-  geometry.setAttribute('aZone',    new THREE.BufferAttribute(aZone, 1));
-  geometry.setAttribute('aDust',    new THREE.BufferAttribute(aDust, 1));
-  geometry.setAttribute('aSphere',  new THREE.BufferAttribute(aSphere, 3));
-  geometry.setAttribute('aLand',    new THREE.BufferAttribute(aLand, 1));
-  geometry.setAttribute('aTerrain', new THREE.BufferAttribute(aTerrain, 1));
-  geometry.setAttribute('aColorEarth', new THREE.BufferAttribute(aColorEarth, 3));
-  geometry.setAttribute('aRandomDelay', new THREE.BufferAttribute(aRandomDelay, 1));
+  geometry.setAttribute('aIdentity', new THREE.BufferAttribute(aIdentity, 1));
+  geometry.setAttribute('aRand', new THREE.BufferAttribute(aRand, 1));
+  geometry.setAttribute('aRiver', new THREE.BufferAttribute(aRiver, 1));
 
-  // BoundingBox 居中计算，防止视口偏移
   geometry.computeBoundingBox();
-  const bbox = geometry.boundingBox;
   const center = new THREE.Vector3();
-  bbox.getCenter(center);
-  geometry.translate(-center.x, -center.y, -center.z);
+  geometry.boundingBox.getCenter(center);
 
   // ---------------------------------------------------------------------
-  // GLSL：Vertex Shader —— 分形噪点已烘焙进位置，此处叠加 3D Curl Noise 流场
-  //        + 鼠标排斥漩涡 + 径向爆破/引力凝聚状态机
+  // 3) ShaderMaterial：3D 高度场置换 + 三色着色
   // ---------------------------------------------------------------------
-  const vertexShader = /* glsl */`
+  const uniforms = {
+    uTime:    { value: 0 },
+    uSpanX:   { value: SPAN_X },
+    uSpanZ:   { value: SPAN_Z },
+    uPixel:   { value: Math.min(devicePixelRatio, 2) },
+    uSand:    { value: new THREE.Color(0xE5A00D) },
+    uWaterDeep:{ value: new THREE.Color(0x0055FF) },
+    uWaterShallow:{ value: new THREE.Color(0x00AAFF) },
+    uLeafTop: { value: new THREE.Color(0x22C55E) },
+    uLeafBot: { value: new THREE.Color(0x14532D) }
+  };
+
+  const vertexShader = `
     precision highp float;
+    attribute float aIdentity;
+    attribute float aRand;
+    attribute float aRiver;
+    uniform float uTime, uSpanX, uSpanZ, uPixel;
 
-    attribute vec3  aRandom;
-    attribute float aSpeed;
-    attribute float aZone;       // 0 盆地沙尘 .. 1 雪山脊
-    attribute float aDust;       // 沙尘羽流密度
-    attribute vec3  aSphere;     // 第零幕：全息地球球坐标位置
-    attribute float aLand;       // 0 海洋 .. 1 陆地
-    attribute float aTerrain;    // 地表类型 0海/0.3沙/0.6绿/0.85山/1.0冰
-    attribute vec3  aColorEarth;  // 第零幕：程序化地球本色 RGB
-    attribute float aRandomDelay; // 转场坠落延迟 0..1（淅沥层次）
+    varying float vId;
+    varying float vH;
+    varying float vRand;
+    varying float vRiver;
 
-    uniform float uTime;
-    uniform float uState;        // 0 = 流沙波动, 1 = 爆破
-    uniform float uMorph;        // 0..1 平滑插值（含 easeOutCubic 引力凝聚）
-    uniform float uBurst;        // 爆破推进强度
-    uniform float uIntro;        // 第零幕 → 第一幕：0 地球 .. 1 完全切入盆地流场
-    uniform float uIntroBurst;   // 转场中段：球体解体爆发隆起 0..1
-    uniform float uGlobeSpin;    // 地球自转角
-    uniform float uShockwave;    // 点击瞬间向外冲击波偏置 0..1
-    uniform vec3  uMouse;        // 鼠标 3D 世界坐标
-    uniform float uMouseStr;     // 鼠标排斥强度（带阻尼回位）
-    uniform float uPixelRatio;
-
-    varying float vSpeed;
-    varying float vAlpha;
-    varying float vDiss;
-    varying float vZone;
-    varying float vDust;
-    varying float vStorm;     // 间歇性风暴强度 0 平静 .. 1 爆发
-    varying float vLand;      // 第零幕：陆/海（地球配色）
-    varying float vIntro;     // 第零幕进度（0 地球 .. 1 盆地）
-    varying float vTerrain;   // 第零幕：地表类型（真实地球配色）
-    varying vec3  vColorEarth; // 第零幕：程序化地球本色
-
-    /* ---- Simplex-style 3D noise (Ashima / 公有领域算法) ---- */
-    vec3 mod289(vec3 x){ return x - floor(x*(1.0/289.0))*289.0; }
-    vec4 mod289(vec4 x){ return x - floor(x*(1.0/289.0))*289.0; }
-    vec4 permute(vec4 x){ return mod289(((x*34.0)+1.0)*x); }
-    vec4 taylorInvSqrt(vec4 r){ return 1.79284291400159 - 0.85373472095314*r; }
-
+    vec4 permute(vec4 x){ return mod(((x*34.0)+1.0)*x, 289.0); }
+    vec4 taylorInvSqrt(vec4 r){ return 1.79284291400159 - 0.85373472095314 * r; }
     float snoise(vec3 v){
       const vec2 C = vec2(1.0/6.0, 1.0/3.0);
       const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
@@ -883,15 +209,15 @@
       vec3 l = 1.0 - g;
       vec3 i1 = min(g.xyz, l.zxy);
       vec3 i2 = max(g.xyz, l.zxy);
-      vec3 x1 = x0 - i1 + C.xxx;
-      vec3 x2 = x0 - i2 + C.yyy;
-      vec3 x3 = x0 - D.yyy;
-      i = mod289(i);
+      vec3 x1 = x0 - i1 + 1.0 * C.xxx;
+      vec3 x2 = x0 - i2 + 2.0 * C.xxx;
+      vec3 x3 = x0 - 1.0 + 3.0 * C.xxx;
+      i = mod(i, 289.0);
       vec4 p = permute(permute(permute(
                  i.z + vec4(0.0, i1.z, i2.z, 1.0))
                + i.y + vec4(0.0, i1.y, i2.y, 1.0))
                + i.x + vec4(0.0, i1.x, i2.x, 1.0));
-      float n_ = 0.142857142857;
+      float n_ = 1.0/7.0;
       vec3 ns = n_ * D.wyz - D.xzx;
       vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
       vec4 x_ = floor(j * ns.z);
@@ -916,328 +242,105 @@
       m = m * m;
       return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
     }
+    float fbm3(vec3 p){ float s=0.0,a=0.5; for(int i=0;i<4;i++){ s+=a*snoise(p); p*=2.0; a*=0.5; } return s; }
 
-    /* ---- Curl Noise：对噪声场求旋度，得无散度流场（卷曲流沙）---- */
-    vec3 curlNoise(vec3 p){
-      const float e = 0.12;
-      vec3 dx = vec3(e, 0.0, 0.0);
-      vec3 dy = vec3(0.0, e, 0.0);
-      vec3 dz = vec3(0.0, 0.0, e);
-
-      float x0 = snoise(p - dx); float x1 = snoise(p + dx);
-      float y0 = snoise(p - dy); float y1 = snoise(p + dy);
-      float z0 = snoise(p - dz); float z1 = snoise(p + dz);
-
-      // 第二个偏移场，保证三分量独立
-      vec3 p2 = p + vec3(123.4, 56.7, 89.1);
-      float x0b = snoise(p2 - dx); float x1b = snoise(p2 + dx);
-      float y0b = snoise(p2 - dy); float y1b = snoise(p2 + dy);
-      float z0b = snoise(p2 - dz); float z1b = snoise(p2 + dz);
-
-      float cx = (y1b - y0b) - (z1 - z0);
-      float cy = (z1b - z0b) - (x1 - x0);
-      float cz = (x1 - x0) - (y1b - y0b);
-      return normalize(vec3(cx, cy, cz) + 1e-5) ;
+    float riverCenterX(float nz){
+      return sin(nz*2.1+0.6)*360.0 + sin(nz*0.9-1.2)*220.0
+           + (fbm3(vec3(nz*1.6+3.0, 7.0, 0.0))*0.5) * 300.0;
     }
 
     void main(){
+      vId = aIdentity;
+      vRand = aRand;
+      vRiver = aRiver;
+
       vec3 pos = position;
-      float spd = aSpeed;
-      vSpeed = spd;
-      vZone = aZone;
-      vDust = aDust;
+      float nz = pos.z / uSpanZ;
+      float cx = riverCenterX(nz);
 
-      // 雪山区几乎静止；沙尘区随密度剧烈翻卷
-      float mobility = (1.0 - aZone) * (0.45 + 0.85 * aDust);
+      float y = 0.0;
 
-      /* ===== 间歇性沙尘暴：低频正弦调制 + smoothstep 阈值裁剪 =====
-         周期约 10s（≈平静 6s / 狂暴 4s）。
-         sin 频率 0.6283 ≈ 2π/10 => 精确 10 秒一轮。
-         smoothstep(0.35, 0.85,...) 把正弦上半段裁成「缓入缓出」的爆发开关，
-         阈值偏高 => 平静期更长、狂暴期更短促有力（呼吸律动）。 */
-      float stormWave = sin(uTime * 0.6283 - 1.2) * 0.5 + 0.5;     // 0..1 低频波
-      float stormIntensity = smoothstep(0.35, 0.85, stormWave);    // 0 平静 .. 1 爆发
-      vStorm = stormIntensity;
-
-      /* ---------- 状态 1：盆地内部 Curl-Noise 流沙波动（受风暴调制）---------- */
-      // 频率调制：爆发期噪声频率抬升 => 卷曲更细碎狂乱
-      float flowFreq = 0.0035 * (1.0 + stormIntensity * 1.6);
-      // 流动速度也随风暴加快
-      float flowRate = 0.06 * (1.0 + stormIntensity * 1.8);
-      vec3 flowSample = pos * flowFreq + vec3(uTime * flowRate * spd, uTime * 0.03, 0.0);
-      vec3 curl = curlNoise(flowSample);
-
-      // 自左向右整体平流（基础微风，平静期也存在）
-      float drift = sin(uTime * 0.5 + pos.z * 0.01) * 6.0;
-
-      // 振幅调制：平静期基础涟漪 6.0，爆发期暴涨到 6 + 46 = 52（成片翻卷）
-      float curlAmp = 6.0 + stormIntensity * 46.0;
-      // 水平 (xz) 流场自由翻卷；Y 轴单独做单向（向上）物理约束，下面单独处理
-      vec3 flowDisp = curl * (curlAmp * spd) * mobility;
-      flowDisp += vec3(drift, 0.0, 0.0) * mobility;
-      flowDisp.y = 0.0;   // 清空噪声给的垂直分量，由下方单向抬升逻辑接管
-
-      /* ===== 地面物理硬约束：扬沙单向起飞 + 重力回落 + 地表绝对下限 =====
-         groundHeight 即粒子原始烘焙高度（盆地/山脉表面），是不可穿透的绝对地板。 */
-      float groundHeight = pos.y;
-
-      // (3) 扬沙起飞的单向性：所有垂直扰动取绝对值/正向，只允许向上离地
-      // 平静期：贴地微幅荡漾（abs => 永不为负，等于轻轻浮起再落下）
-      float ripple = abs(sin(uTime * 0.9 + pos.x * 0.02 + pos.z * 0.015))
-                     * (3.0 + stormIntensity * 12.0) * mobility;
-      // 基础扬尘（始终 ≥ 0）
-      float baseDust = aDust * (1.0 - aZone) * (4.0 + 6.0 * (0.5 + 0.5 * sin(uTime * 0.7 + pos.x * 0.01)));
-
-      // 爆发期：强力离地卷起，向高空撕扯抛洒（3D 龙卷风沙浪涌），取正向湍流
-      float lift = stormIntensity * stormIntensity;          // 二次曲线 => 爆发更迅猛
-      float liftTurb = abs(curlNoise(pos * 0.006 + uTime * 0.25).y);  // 正向紊乱抬升场
-      float updraft = mobility * lift * (60.0 + 80.0 * liftTurb)
-                      * (0.5 + 0.5 * sin(uTime * 1.7 + pos.x * 0.015 + pos.z * 0.02));
-
-      // 单向向上的总抬升量（恒 ≥ 0）
-      float upLift = ripple + baseDust + max(updraft, 0.0);
-
-      // (2) 向下吸附的阻尼重力：风暴越平息(stormIntensity→0)，回落拉力越强
-      //     用 (1 - stormIntensity) 作权重，把抬升量平滑衰减 => 粒子带阻尼贴回地表
-      float settle = 1.0 - smoothstep(0.0, 0.6, stormIntensity); // 0 爆发不回落 .. 1 平静强回落
-      float gravityDamp = mix(1.0, 0.06, settle);                // 平静期把抬升压到 6% => 贴地
-      upLift *= gravityDamp;
-
-      // 爆发期叠加额外水平撕扯，强化龙卷卷扬感
-      flowDisp.xz += curl.xz * mobility * lift * 40.0 * spd;
-
-      // (1) 地形高度作为绝对下限：max() 单向约束，噪声再向下也不能穿透地表
-      vec3 flowOffsetXZ = vec3(flowDisp.x, 0.0, flowDisp.z) * (1.0 - uMorph);
-      float targetY = groundHeight + upLift * (1.0 - uMorph);
-      vec3 flowPos = pos + flowOffsetXZ;
-      flowPos.y = max(groundHeight, targetY);   // 绝对地板：粒子最低只能贴在地表
-
-      /* ---------- 鼠标 3D 排斥：挖空流体漩涡 ---------- */
-      vec3 toMouse = flowPos - uMouse;
-      float md = length(toMouse);
-      float radius = 150.0;
-      float push = smoothstep(radius, 0.0, md) * uMouseStr;
-      // 切向旋流 + 法向外推 => 漩涡
-      vec3 tangent = normalize(cross(toMouse, vec3(0.0, 1.0, 0.0)) + 1e-4);
-      flowPos += normalize(toMouse + 1e-4) * push * 120.0;
-      flowPos += tangent * push * 70.0;
-      // 鼠标排斥同样不得把粒子压穿地表（仅作用于流场态，爆破态稍后自由插值）
-      flowPos.y = max(groundHeight, flowPos.y);
-
-      /* ---------- 状态 2：径向爆破与线性扫描解体 ---------- */
-      // 爆破目标：原点向外强力冲力 + 随机方向乱飞 + 线性扫描相位
-      float scan = fract((pos.x + SPAN_HALF) / SPAN_FULL); // 0..1 线性扫描
-      float burstT = uBurst;
-      vec3 radial = normalize(pos + 1e-4);
-      vec3 chaos  = aRandom;
-      vec3 burstDir = normalize(radial * 0.6 + chaos * 1.4);
-      float scanDelay = smoothstep(0.0, 1.0, burstT - scan * 0.4);
-      vec3 burstPos = pos
-        + burstDir * (600.0 * scanDelay)
-        + chaos * snoise(pos * 0.01 + uTime * 0.2) * 200.0 * scanDelay;
-      // 爆破时叠加湍流抖动
-      burstPos += curlNoise(burstPos * 0.004 + uTime * 0.15) * 90.0 * burstT;
-
-      /* ---------- 状态机插值：uMorph 含 easeOutCubic 引力凝聚 ---------- */
-      vec3 finalPos = mix(flowPos, burstPos, uMorph);
-
-      /* ========== 第零幕：宇宙锚定转场 ==========
-         同一批顶点在「地球球坐标 aSphere」⇄「盆地流场 finalPos」之间过渡。
-         uIntro: 0 = 完整地球, 1 = 完全切入第一幕盆地。
-         中段 uIntroBurst 让球体沿法线炸开成混沌星尘，再 easeOutCubic 吸附下沉。 */
-      vIntro = uIntro;
-      vLand  = aLand;
-      vTerrain = aTerrain;
-      vColorEarth = aColorEarth;
-      float introFront = 1.0;   // 第零幕：朝向相机的前半球可见度（背面隐去 => 实心球）
-      if (uIntro < 0.999) {
-        // 地球自转（绕 y 轴）
-        float cs = cos(uGlobeSpin), sn = sin(uGlobeSpin);
-        vec3 spun = vec3(aSphere.x * cs - aSphere.z * sn,
-                         aSphere.y,
-                         aSphere.x * sn + aSphere.z * cs);
-        // 地球表面轻微呼吸 + 全息抖动
-        vec3 nrm = normalize(spun + 1e-5);
-        spun += nrm * sin(uTime * 1.5 + aSpeed * 9.0) * 3.0;
-
-        // 前半球可见度：相机沿 -z 注视，法线 z>0 为正面；背面平滑隐去
-        introFront = smoothstep(-0.35, 0.45, nrm.z);
-
-        // —— 点击冲击波：沿球面法线向外的速度偏置（瞬间膨胀）——
-        vec3 shockOut = nrm * uShockwave * (340.0 + aSpeed * 180.0);
-
-        // 解体爆发：沿球面法线 + 随机方向向外抛洒
-        vec3 explodeDir = normalize(nrm * 0.7 + aRandom * 1.3);
-        vec3 explodedGlobe = spun + shockOut
-                           + explodeDir * uIntroBurst * (520.0 + aSpeed * 260.0);
-        explodedGlobe += curlNoise(spun * 0.01 + uTime * 0.2) * uIntroBurst * 140.0;
-
-        // —— 淅沥层次坠落：每粒子按 aRandomDelay 错峰推进局部进度 ——
-        // 全局 uIntro 0..1 映射到「延迟窗 + 坠落窗」：先延迟的粒子后落
-        float delaySpan = 0.45;                       // 错峰窗口
-        float localStart = aRandomDelay * delaySpan;
-        float localProg = clamp((uIntro - localStart) / (1.0 - delaySpan), 0.0, 1.0);
-        // easeOutCubic 让坠落末段平滑贴地
-        float fall = 1.0 - pow(1.0 - localProg, 3.0);
-
-        // 地球态（含解体/冲击）→ 盆地态：按错峰 fall 坠落吸附
-        vec3 introPos = mix(explodedGlobe, finalPos, fall);
-        finalPos = introPos;
-        // 解体后逐渐恢复全可见（爆炸星尘四散，不再隐藏背面）
-        introFront = mix(introFront, 1.0, max(max(uIntroBurst, uShockwave), uIntro));
+      if (aIdentity < 0.2) {
+        // 湛蓝水系：朝河道中心轴聚拢 + 平铺塌陷
+        pos.x = mix(pos.x, cx, 0.55);
+        y = -20.0;
+        y += sin(uTime*0.6 + pos.x*0.01) * 1.2;
+      } else if (aIdentity < 0.6) {
+        // 蓬勃绿洲：垂直拔高 + 体积膨胀（圆润树冠）
+        float sprout = snoise(pos.xz * 0.1) * 35.0 + 40.0;
+        sprout += abs(snoise(pos.xz * 0.04 + 5.0)) * 45.0;
+        y = sprout;
+        float t = clamp(y / 110.0, 0.0, 1.0);
+        vec3 vn = vec3(snoise(pos.xzy*0.07+3.0), snoise(pos.zxy*0.06+9.0), snoise(pos.yzx*0.07+15.0));
+        pos.x += vn.x * (20.0 + t*55.0);
+        pos.z += vn.z * (20.0 + t*55.0);
+        y    += vn.y * 22.0;
+      } else {
+        // 黄金沙丘：低频平滑正弦起伏
+        float d = pos.x * 0.0016 + pos.z * 0.0011;
+        float dunes = sin(d * 4.0 + fbm3(vec3(pos.xz*0.0012, 0.0))*3.0) * 42.0;
+        dunes += (fbm3(vec3(pos.xz*0.004, 1.0)) - 0.5) * 30.0;
+        dunes += sin(pos.x*0.02)*cos(pos.z*0.016) * 5.0;
+        y = dunes + 6.0;
       }
 
-      /* ---------- 消散透明度（爆破归零曲线）---------- */
-      // dissipationFactor: 越接近爆破完成越大
-      float dissipationFactor = clamp(uMorph * (0.4 + 0.6 * scan), 0.0, 1.0);
-      vDiss = dissipationFactor;
-      float uFadePower = 2.4;
-      float dissAlpha = 1.0 - pow(dissipationFactor, uFadePower); // 绝对归零曲线
+      pos.y = y;
+      vH = clamp((y + 30.0) / 170.0, 0.0, 1.0);
 
-      // 速度/时间驱动的动态透明度梯度（全息星尘质感）
-      float flicker = 0.6 + 0.4 * sin(uTime * 2.0 + spd * 12.0 + pos.y * 0.02);
-      vAlpha = clamp(dissAlpha * flicker * introFront, 0.0, 1.0);
+      vec4 mv = modelViewMatrix * vec4(pos, 1.0);
+      gl_Position = projectionMatrix * mv;
 
-      vec4 mvPosition = modelViewMatrix * vec4(finalPos, 1.0);
-      gl_Position = projectionMatrix * mvPosition;
-
-      // 透视尺寸 + 爆破时拉大颗粒
-      float size = (2.6 + spd * 2.2) * uPixelRatio * (1.0 + uMorph * 1.4);
-      // 第零幕：陆地粒子放大、海洋粒子缩小 => 大陆轮廓在球面上清晰凸显
-      float introVis = 1.0 - smoothstep(0.55, 1.0, uIntro);
-      float landSize = mix(0.45, 1.6, smoothstep(0.35, 0.65, aLand)); // 海 0.45x，陆 1.6x
-      size *= mix(1.0, landSize, introVis);
-      gl_PointSize = size * (520.0 / -mvPosition.z);
+      float size = 2.2 * uPixel;
+      if (aIdentity < 0.2)       size *= 2.4;
+      else if (aIdentity < 0.6)  size *= 3.0;
+      else                       size *= 1.4;
+      gl_PointSize = size * (640.0 / -mv.z);
     }
   `;
 
-  // ---------------------------------------------------------------------
-  // GLSL：Fragment Shader —— 双态着色（硬内核 + 指数衰减柔晕）
-  // ---------------------------------------------------------------------
-  const fragmentShader = /* glsl */`
+  const fragmentShader = `
     precision highp float;
-
-    uniform vec3  uColor;     // 琥珀金（沙尘主色）
-    uniform vec3  uSnow;      // 冷白雪山色
-    uniform vec3  uHaze;      // 沙尘羽流高浓度处的灰白霾色
+    uniform vec3 uSand, uWaterDeep, uWaterShallow, uLeafTop, uLeafBot;
     uniform float uTime;
-    uniform float uTransitionProgress;  // 第零幕→第一幕色彩蜕变进度 0..1
-    uniform float uGlowIntensity;       // 解体能量脉冲发光强度
-
-    varying float vSpeed;
-    varying float vAlpha;
-    varying float vDiss;
-    varying float vZone;      // 0 盆地沙尘 .. 1 雪山脊
-    varying float vDust;      // 沙尘羽流密度
-    varying float vStorm;     // 间歇性风暴强度 0 平静 .. 1 爆发
-    varying float vLand;      // 第零幕：陆/海
-    varying float vIntro;     // 第零幕进度 0 地球 .. 1 盆地
-    varying float vTerrain;   // 第零幕：地表类型（真实地球配色）
-    varying vec3  vColorEarth; // 第零幕：程序化地球本色
+    varying float vId;
+    varying float vH;
+    varying float vRand;
+    varying float vRiver;
 
     void main(){
-      // 片元到粒子中心距离
-      vec2 uv = gl_PointCoord - vec2(0.5);
-      float dist = length(uv) * 2.0;   // 0(中心) .. 1(边缘)
+      vec2 uv = gl_PointCoord - 0.5;
+      float d = length(uv) * 2.0;
+      float core = smoothstep(0.5, 0.0, d);
+      float halo = exp(-d * d * 3.5);
+      float intensity = core * 1.5 + halo * 0.7;
 
-      if (dist > 1.0) discard;
+      vec3 col;
+      float alpha;
 
-      // 硬内核：极高亮、边缘锐利
-      float core = smoothstep(0.42, 0.0, dist);
-      // 柔软外晕：指数级衰减拖尾 exp(-dist*dist)
-      float halo = exp(-dist * dist * 4.5);
-      float intensity = core * 1.6 + halo * 0.75;
-
-      /* -------- 遥感图配色重塑 --------
-         冷白雪山脊 (uSnow)  ←  暖琥珀沙尘 (uColor)  →  灰白浓霾 (uHaze)
-         vZone 决定冷/暖；vDust 决定沙尘从深琥珀(薄)到灰白(浓)的扬尘梯度 */
-      // 1) 盆地基色：薄沙=深琥珀，浓沙尘羽流=灰白扬尘
-      vec3 basinCol = mix(uColor, uHaze, smoothstep(0.15, 0.95, vDust));
-      // 2) 向雪山脊过渡为冷白
-      vec3 surfCol  = mix(basinCol, uSnow, smoothstep(0.35, 0.9, vZone));
-      // 3) 核心高光提亮（白炽内核，全息星尘质感）
-      vec3 hot = mix(surfCol, vec3(1.0, 0.96, 0.86), core * 0.8);
-
-      vec3 col = hot * intensity;
-
-      // 雪山脊整体更冷亮一档，盆地暖；强化冷暖对比
-      col *= mix(vec3(1.0, 0.94, 0.82), vec3(0.86, 0.93, 1.08), vZone);
-
-      // 间歇性沙尘暴视觉联动：爆发期发光提升 ~20%（仅作用于盆地沙尘，雪山不受扬尘影响）
-      float stormGlow = vStorm * (1.0 - vZone);
-      col *= (1.0 + 0.20 * stormGlow);
-
-      // 爆破时核心略转炽红，呈生态危机感
-      col = mix(col, col * vec3(1.18, 0.66, 0.40), vDiss * 0.5);
-
-      // 透明度：浓沙尘扬尘更亮、雪山脊略实，薄沙半透；爆发期整体增亮 ~20%
-      float densityA = 0.55 + 0.45 * vDust + 0.25 * vZone;
-      float alpha = intensity * vAlpha * densityA * (1.0 + 0.20 * stormGlow);
-
-      /* ===== 第零幕：地球本色 → 全息琥珀金 色彩蜕变 =====
-         前 40% 保持地球本色自转；40%-90% 蓝绿褪去、琥珀金由内透出（氧化/全息化）；
-         落定时全场统一为纯净琥珀金。glow 脉冲在 progress≈0.6 短暂迸发。 */
-      float introMix = 1.0 - smoothstep(0.55, 1.0, vIntro);  // 1 地球(形态) .. 0 盆地
-      if (introMix > 0.001) {
-        vec3 earthCol = vColorEarth;   // 程序化地球本色（注入的 attribute）
-
-        // —— 核心蜕变公式：地球本色 → 琥珀金 #E5A00D ——
-        vec3 amber = vec3(0.898, 0.627, 0.051);
-        float prog = uTransitionProgress;
-        vec3 globeBase = mix(earthCol, amber, smoothstep(0.4, 0.9, prog));
-
-        // 「由内而外」氧化感：粒子核心先变金，边缘后变（core 越靠中心越早氧化）
-        float oxidize = smoothstep(0.4, 0.9, prog + (core - 0.5) * 0.25);
-        globeBase = mix(earthCol, amber, oxidize);
-
-        float isLand = smoothstep(0.05, 0.2, vTerrain); // 0海 1陆
-        // 大气边缘辉光（地球期海洋微蓝晕，随蜕变淡出）
-        globeBase += vec3(0.06, 0.14, 0.24) * halo * (1.0 - isLand) * (1.0 - smoothstep(0.4, 0.8, prog));
-
-        // —— 能量脉冲：解体瞬间(≈0.6)亮度迸发，随后平复 ——
-        float pulse = uGlowIntensity;              // JS 端在 prog≈0.6 注入脉冲
-        vec3 globeFinal = globeBase * intensity * (0.7 + 0.5 * isLand) * (1.0 + pulse);
-        // 脉冲峰值时核心透出炽白能量
-        globeFinal = mix(globeFinal, globeFinal + vec3(1.0, 0.85, 0.5) * core, pulse * 0.6);
-
-        float globeAlpha = intensity * (0.4 + 0.6 * isLand) * (1.0 + pulse * 0.5);
-
-        col   = mix(col, globeFinal, introMix);
-        alpha = mix(alpha, globeAlpha, introMix);
+      if (vId < 0.2) {
+        col = mix(uWaterDeep, uWaterShallow, core * 0.6 + 0.2);
+        float spec = pow(max(0.0, 0.5 + 0.5*sin(uTime*2.0 + vRand*40.0)), 10.0);
+        col += vec3(0.7, 0.9, 1.0) * spec * 0.9 * core;
+        col *= 1.15;
+        alpha = intensity * 0.85;
+      } else if (vId < 0.6) {
+        float t = smoothstep(0.0, 1.0, vH);
+        col = mix(uLeafBot, uLeafTop, t);
+        col += uLeafTop * smoothstep(0.7, 1.0, vH) * 0.5;
+        col *= (0.6 + 0.7 * t);
+        alpha = intensity * (0.7 + 0.3 * t);
+      } else {
+        col = uSand * (0.55 + 0.7 * vH);
+        alpha = intensity * 0.6;
       }
 
-      if (alpha < 0.003) discard;
-
+      if (alpha < 0.004) discard;
       gl_FragColor = vec4(col, alpha);
     }
   `;
 
-  // ---------------------------------------------------------------------
-  // ShaderMaterial：加法混合 + 关闭深度写入 => 电影级全息星尘
-  // ---------------------------------------------------------------------
   const material = new THREE.ShaderMaterial({
-    uniforms: {
-      uTime:      { value: 0 },
-      uState:     { value: 0 },
-      uMorph:     { value: 0 },
-      uBurst:     { value: 0 },
-      uIntro:     { value: 0 },   // 第零幕起始：完整地球
-      uIntroBurst:{ value: 0 },
-      uGlobeSpin: { value: 0 },
-      uShockwave: { value: 0 },   // 点击冲击波偏置
-      uTransitionProgress: { value: 0 },  // 色彩蜕变进度
-      uGlowIntensity:      { value: 0 },  // 能量脉冲发光
-      uMouse:     { value: new THREE.Vector3(99999, 99999, 99999) },
-      uMouseStr:  { value: 0 },
-      uPixelRatio:{ value: Math.min(window.devicePixelRatio, 2) },
-      uColor:     { value: new THREE.Color(0xD9952A) },   // 暖琥珀沙尘（偏暖砂）
-      uSnow:      { value: new THREE.Color(0xeaf0f4) },    // 冷白雪山（近白微蓝）
-      uHaze:      { value: new THREE.Color(0xeaddb8) }     // 浓沙尘灰白扬尘霾（米沙色）
-    },
-    vertexShader: vertexShader
-      .replace(/SPAN_HALF/g, (SPAN * 0.5).toFixed(1))
-      .replace(/SPAN_FULL/g, SPAN.toFixed(1)),
-    fragmentShader: fragmentShader,
+    uniforms, vertexShader, fragmentShader,
     transparent: true,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
@@ -1245,341 +348,74 @@
   });
 
   const points = new THREE.Points(geometry, material);
-  points.rotation.x = 0.0;          // 第零幕地球无倾斜；转场后渐变到 -0.18 盆地视角
-  points.frustumCulled = false;     // 转场中粒子位移极大，关闭视锥剔除防止整体消失
+  points.position.sub(center);
+  points.position.y = 0;
   scene.add(points);
 
   // ---------------------------------------------------------------------
-  // 鼠标 → 3D 世界坐标（Raycaster 投射到地形平面）
+  // 4) 绿冠正上方：呼吸的琥珀金测绘圆圈线框（静态钉住）
   // ---------------------------------------------------------------------
-  const raycaster = new THREE.Raycaster();
-  const ndc = new THREE.Vector2();
-  const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-  const mouseWorld = new THREE.Vector3(99999, 99999, 99999);
-  let mouseActive = false;
-
-  window.addEventListener('mousemove', (e) => {
-    // 排除右侧面板区域
-    if (e.clientX > window.innerWidth - 380) { mouseActive = false; return; }
-    ndc.x = (e.clientX / window.innerWidth) * 2 - 1;
-    ndc.y = -(e.clientY / window.innerHeight) * 2 + 1;
-    raycaster.setFromCamera(ndc, camera);
-    const hit = new THREE.Vector3();
-    if (raycaster.ray.intersectPlane(groundPlane, hit)) {
-      // 逆向 points 的旋转，使坐标系与顶点一致
-      hit.applyAxisAngle(new THREE.Vector3(1, 0, 0), 0.18);
-      mouseWorld.copy(hit);
-      mouseActive = true;
+  const ringGroup = new THREE.Group();
+  function makeRing(radius, y, x, z, segs) {
+    const pts = [];
+    for (let i = 0; i <= segs; i++) {
+      const a = (i / segs) * Math.PI * 2;
+      pts.push(new THREE.Vector3(Math.cos(a) * radius + x, y, Math.sin(a) * radius + z));
+    }
+    const g = new THREE.BufferGeometry().setFromPoints(pts);
+    const m = new THREE.LineBasicMaterial({ color: 0xE5A00D, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthTest: false });
+    return new THREE.Line(g, m);
+  }
+  const ringSpots = [ [300, -300], [-200, 200], [600, 100] ];
+  ringSpots.forEach((s) => {
+    for (let r = 0; r < 3; r++) {
+      ringGroup.add(makeRing(60 + r * 45, 150, s[0], s[1], 64));
     }
   });
-  window.addEventListener('mouseleave', () => { mouseActive = false; });
+  scene.add(ringGroup);
 
   // ---------------------------------------------------------------------
-  // 状态机：空格键 爆破 ↔ 凝聚
+  // 5) 缓慢环绕 + HUD 数据轻微跳动
   // ---------------------------------------------------------------------
-  let state = 0;                 // 0 流沙, 1 爆破
-  let morphTarget = 0;           // uMorph 目标
-  let burstTarget = 0;
-  let restoring = false;
-  let restoreStart = 0;
-  const RESTORE_DUR = 1.5;       // 1.5s 引力凝聚
+  let theta = 0;
+  const BASE_Y = 760;
+  const lookAt = new THREE.Vector3(0, 30, -220);
 
-  function easeOutCubic(t) { return 1.0 - Math.pow(1.0 - t, 3.0); }
-
-  window.addEventListener('keydown', (e) => {
-    if (e.code === 'Space') {
-      e.preventDefault();
-      if (INTRO.active) return;   // 转场期间锁定，禁用打散
-      if (state === 0) {
-        // → 爆破
-        state = 1;
-        morphTarget = 1;
-        burstTarget = 1;
-        restoring = false;
-      } else {
-        // → 引力凝聚复原
-        state = 0;
-        morphTarget = 0;
-        burstTarget = 0;
-        restoring = true;
-        restoreStart = performance.now() / 1000;
-      }
-    }
-  });
-
-  // ---------------------------------------------------------------------
-  // 面板数据高频刷新（每 0.5s 微幅震荡）
-  // ---------------------------------------------------------------------
-  const elWind   = document.getElementById('m-wind');
-  const elMoist  = document.getElementById('m-moist');
-  const elExpand = document.getElementById('m-expand');
-
-  function rand(min, max) { return min + Math.random() * (max - min); }
-
+  function jitter(base, amp, dp) { return (base + (Math.random() - 0.5) * amp).toFixed(dp); }
   setInterval(() => {
-    elWind.textContent   = rand(9.8, 18.2).toFixed(1);
-    elMoist.textContent  = rand(2.0, 3.0).toFixed(2);
-    elExpand.textContent = rand(3.0, 5.0).toFixed(2);
+    document.getElementById('m-ndvi').textContent = jitter(0.78, 0.02, 2);
+    document.getElementById('m-wqi').textContent  = jitter(91.6, 0.6, 1);
+    document.getElementById('m-soil').textContent = jitter(64.3, 0.5, 1) + '%';
+    document.getElementById('m-wind').textContent = jitter(12.7, 0.4, 1) + '%';
+    document.getElementById('m-flow').textContent = jitter(128, 3, 0) + ' m\u00B3/s';
+    document.getElementById('m-fix').textContent  = jitter(82.4, 0.5, 1) + '%';
+    document.getElementById('m-alt').textContent  = jitter(1528.6, 1.2, 1) + ' m';
   }, 500);
 
-  // ---------------------------------------------------------------------
-  // 第零幕：点击触发式宇宙锚定转场（状态机）
-  //   SPIN   : 蓝绿地球自转一周，锁定塔里木 → 拉出全息引线 + 照片面板
-  //   LOCKED : 地球定格，等待点击 / 回车
-  //   TRANS  : 点击触发 → 引线崩断 + 照片淡出 + 冲击波 + 蓝绿氧化为琥珀金
-  //            + 淅沥层次坠落重组盆地 + 相机后撤上帝视角
-  //   DONE   : 交还 OrbitControls，第一幕面板苏醒，流场启动
-  // ---------------------------------------------------------------------
-  const INTRO = {
-    active: true,
-    phase: 'SPIN',
-    spinDur: 5.6,                 // 自转展示 + 锁定时长（约一周）
-    transDur: 2.2,                // 点击后解体→重组时长
-    clickTime: 0,                 // 点击发生的 elapsed 时间
-    lineGlitched: false, handed: false
-  };
-
-  // 相机关键位姿（全程宏观远观）
-  const camFar = new THREE.Vector3(0, 240, 2600);   // 宇宙宏观，注视地球
-  const camGod = new THREE.Vector3(0, 1000, 1700);  // 上帝视角（盆地全景）
-  const lookGlobe = new THREE.Vector3(0, 0, 0);
-
-  const SPIN_RATE = 1.05;                       // 地球自转角速度（rad/s，约 6s 一周）
-
-  function easeInOutCubic(t){ return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2,3)/2; }
-
-  // ===== 3D 锚点：塔里木落点在球面上的位置（GLOBE_R 半径）=====
-  const target3D = new THREE.Vector3(
-    TARIM_DIR[0] * GLOBE_R,
-    TARIM_DIR[1] * GLOBE_R,
-    TARIM_DIR[2] * GLOBE_R
-  );
-  const _proj = new THREE.Vector3();    // 投影临时量
-
-  // HUD DOM
-  const flashEl   = document.getElementById('flash');
-  const panelEl   = document.getElementById('panel');
-  const hudSvg    = document.getElementById('hud-svg');
-  const hudPhoto  = document.getElementById('hud-photo');
-  const anchorDot = document.getElementById('anchorDot');
-  const anchorRing= document.getElementById('anchorRing');
-  const leaderLine= document.getElementById('leaderLine');
-  const enterBtn  = document.getElementById('enterBtn');
-
-  const _tmpV = new THREE.Vector3();
-
-  // ===== 实时 3D→2D 投影：把球面塔里木点连到照片面板边缘 =====
-  function updateHudLine(spin) {
-    // 将锚点按当前自转角旋转（与着色器一致：绕 Y 轴）
-    const cs = Math.cos(spin), sn = Math.sin(spin);
-    _proj.set(
-      target3D.x * cs - target3D.z * sn,
-      target3D.y,
-      target3D.x * sn + target3D.z * cs
-    );
-    // 同步 points 的 x 轴倾斜（地球期为 0，转场期渐变）
-    _proj.applyAxisAngle(new THREE.Vector3(1, 0, 0), points.rotation.x);
-    _proj.project(camera);   // → NDC
-
-    const w = window.innerWidth, h = window.innerHeight;
-    const sx = (_proj.x * 0.5 + 0.5) * w;
-    const sy = (-_proj.y * 0.5 + 0.5) * h;
-    const facing = _proj.z < 1.0; // 在视锥内
-
-    anchorDot.setAttribute('cx', sx.toFixed(1));
-    anchorDot.setAttribute('cy', sy.toFixed(1));
-    anchorRing.setAttribute('cx', sx.toFixed(1));
-    anchorRing.setAttribute('cy', sy.toFixed(1));
-
-    // 照片面板右缘中点作为引线终点
-    const pr = hudPhoto.getBoundingClientRect();
-    const ex = pr.right;
-    const ey = pr.top + pr.height * 0.5;
-    // 折线：锚点 → 中途拐点 → 面板缘（科技感折角）
-    const midX = (sx + ex) * 0.5;
-    leaderLine.setAttribute('points',
-      sx.toFixed(1)+','+sy.toFixed(1)+' '+
-      midX.toFixed(1)+','+sy.toFixed(1)+' '+
-      ex.toFixed(1)+','+ey.toFixed(1));
-    anchorDot.style.opacity = facing ? '1' : '0.2';
-  }
-
-  // 第零幕状态推进；返回 true 表示仍在转场中
-  function updateIntro(elapsed) {
-    let introVal = 0.0, introBurst = 0.0, shock = 0.0, progress = 0.0;
-    let spin;
-
-    if (INTRO.phase === 'SPIN') {
-      // 地球自转，宏观远观；末段平滑对齐到塔里木正对相机的角度
-      const freeSpin = elapsed * SPIN_RATE;
-      const faceAngle = Math.atan2(TARIM_DIR[0], TARIM_DIR[2]);
-      const turns = Math.round((freeSpin - faceAngle) / (Math.PI * 2));
-      const alignTarget = faceAngle + turns * Math.PI * 2;   // 最近等价对齐角
-      const alignK = smoothstepJS(INTRO.spinDur - 1.3, INTRO.spinDur, elapsed);
-      spin = freeSpin + (alignTarget - freeSpin) * alignK;   // 末段缓动对齐
-      camera.position.copy(camFar);
-      camera.position.x += Math.sin(elapsed * 0.2) * 30;
-      camera.lookAt(lookGlobe);
-      introVal = 0.0; progress = 0.0;
-      // 自转接近一周 → 锁定，拉出 HUD
-      if (elapsed >= INTRO.spinDur) {
-        INTRO.phase = 'LOCKED';
-        INTRO.lockSpin = alignTarget;   // 锁定在塔里木正对相机的角度
-        hudSvg.classList.add('visible');
-        hudPhoto.classList.add('visible', 'flicker');
-        setTimeout(() => hudPhoto.classList.remove('flicker'), 650);
-      }
-    } else if (INTRO.phase === 'LOCKED') {
-      // 地球定格，等待点击
-      spin = INTRO.lockSpin;
-      camera.position.copy(camFar);
-      camera.lookAt(lookGlobe);
-      introVal = 0.0; progress = 0.0;
-    } else if (INTRO.phase === 'TRANS') {
-      spin = INTRO.lockSpin;
-      const k = Math.min((elapsed - INTRO.clickTime) / INTRO.transDur, 1.0);
-      const eo = easeOutCubic(k);
-      // 冲击波：点击瞬间迸发，快速衰减（高斯前沿）
-      shock = Math.exp(-Math.pow((k - 0.08) / 0.10, 2.0));
-      // 解体隆起：前 35% 膨胀，末段回落
-      introBurst = Math.sin(Math.min(k / 0.35, 1.0) * Math.PI * 0.5) * (1.0 - smoothstepJS(0.45, 1.0, k));
-      introVal = eo;                            // 驱动着色器内错峰坠落
-      progress = smoothstepJS(0.0, 0.85, k);    // 蓝绿氧化为琥珀金
-      // 相机缓缓后撤到上帝视角
-      camera.position.lerpVectors(camFar, camGod, easeInOutCubic(k));
-      _tmpV.lerpVectors(lookGlobe, new THREE.Vector3(0, -30, 0), eo);
-      camera.lookAt(_tmpV);
-      points.rotation.x = -0.18 * eo;
-      if (k >= 1.0) INTRO.phase = 'DONE';
-    } else { // DONE
-      spin = INTRO.lockSpin;
-      introVal = 1.0; progress = 1.0;
-      points.rotation.x = -0.18;
-      if (!INTRO.handed) {
-        INTRO.handed = true;
-        INTRO.active = false;
-        camera.position.copy(camGod);
-        camera.lookAt(0, -30, 0);
-        controls.target.set(0, 0, 0);
-        controls.syncFromCamera();
-        controls.enabled = true;
-        flashEl.style.opacity = '0';
-        // 第一幕面板苏醒
-        panelEl.classList.remove('locked');
-      }
-    }
-
-    // 能量脉冲：以 progress≈0.6 为中心的高斯峰
-    const glowPulse = Math.exp(-Math.pow((progress - 0.6) / 0.12, 2.0)) * 1.6 + shock * 0.8;
-
-    material.uniforms.uIntro.value = introVal;
-    material.uniforms.uIntroBurst.value = introBurst;
-    material.uniforms.uGlobeSpin.value = spin;
-    material.uniforms.uShockwave.value = shock;
-    material.uniforms.uTransitionProgress.value = progress;
-    material.uniforms.uGlowIntensity.value = glowPulse;
-
-    // HUD 引线：仅在 LOCKED 与 TRANS 早期可见
-    if (INTRO.phase === 'LOCKED' || (INTRO.phase === 'TRANS' && (elapsed - INTRO.clickTime) < 0.4)) {
-      updateHudLine(spin);
-    }
-    return INTRO.active;
-  }
-
-  // ===== 点击 / 回车：触发第零→第一幕转场（唯一开关）=====
-  let isTransitioning = false;
-  function triggerTransition() {
-    if (isTransitioning || INTRO.phase !== 'LOCKED') return;
-    isTransitioning = true;
-    INTRO.phase = 'TRANS';
-    INTRO.clickTime = clock.elapsedTime;
-    // 引线崩断：闪烁两下后断开
-    hudSvg.classList.add('glitch');
-    setTimeout(() => {
-      hudSvg.classList.remove('visible', 'glitch');
-    }, 360);
-    // 照片 HUD 故障抖动淡出
-    hudPhoto.classList.remove('flicker');
-    hudPhoto.classList.add('glitch-out');
-    setTimeout(() => { hudPhoto.style.display = 'none'; }, 520);
-    // 解体白闪
-    flashEl.style.transition = 'none';
-    flashEl.style.opacity = '0.9';
-    requestAnimationFrame(() => {
-      flashEl.style.transition = 'opacity 1.4s ease-out';
-      flashEl.style.opacity = '0';
-    });
-  }
-  hudPhoto.addEventListener('click', triggerTransition);
-  enterBtn.addEventListener('click', (e) => { e.stopPropagation(); triggerTransition(); });
-  window.addEventListener('keydown', (e) => {
-    if (e.code === 'Enter') { e.preventDefault(); triggerTransition(); }
-  });
-
-  // JS 版 smoothstep（供转场使用）
-  function smoothstepJS(e0, e1, x) {
-    const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0)));
-    return t * t * (3 - 2 * t);
-  }
-
-  // ---------------------------------------------------------------------
-  // 主渲染循环
-  // ---------------------------------------------------------------------
   const clock = new THREE.Clock();
-  let curMorph = 0, curBurst = 0, curMouseStr = 0;
-
   function animate() {
     requestAnimationFrame(animate);
-    const dt = Math.min(clock.getDelta(), 0.05);
-    const t = clock.elapsedTime;
+    const t = clock.getElapsedTime();
+    uniforms.uTime.value = t;
 
-    material.uniforms.uTime.value = t;
+    theta = Math.sin(t * 0.06) * 0.3;
+    camera.position.x = Math.sin(theta) * 1500;
+    camera.position.z = Math.cos(theta) * 1500;
+    camera.position.y = BASE_Y;
+    camera.lookAt(lookAt);
 
-    // --- 第零幕转场：相机轨迹 + 球体解体重组（运行时接管相机）---
-    const inIntro = INTRO.active ? updateIntro(t) : false;
+    const pulse = 0.25 + 0.15 * Math.sin(t * 1.5);
+    ringGroup.children.forEach(c => { c.material.opacity = pulse; });
 
-    // --- uMorph 推进 ---
-    if (restoring) {
-      // 引力凝聚：easeOutCubic 在 1.5s 内由 1 → 0
-      const k = Math.min((performance.now() / 1000 - restoreStart) / RESTORE_DUR, 1.0);
-      curMorph = (1.0 - easeOutCubic(k)) * 1.0;
-      curBurst = curMorph;
-      if (k >= 1.0) { restoring = false; curMorph = 0; curBurst = 0; }
-    } else {
-      // 爆破推进：快速冲出
-      curMorph += (morphTarget - curMorph) * Math.min(dt * 6.0, 1.0);
-      curBurst += (burstTarget - curBurst) * Math.min(dt * 3.5, 1.0);
-    }
-    material.uniforms.uMorph.value = curMorph;
-    material.uniforms.uBurst.value = curBurst;
-    material.uniforms.uState.value = state;
-
-    // --- 鼠标排斥强度（带阻尼回位）；转场期间关闭 ---
-    const targetStr = (mouseActive && !inIntro) ? 1.0 : 0.0;
-    curMouseStr += (targetStr - curMouseStr) * Math.min(dt * 5.0, 1.0);
-    material.uniforms.uMouseStr.value = curMouseStr;
-    material.uniforms.uMouse.value.copy(mouseWorld);
-
-    // --- 上帝视角 OrbitControls：360° 全息环绕（转场期间 controls.enabled=false 自动跳过）---
-    controls.update(dt);
-
-    // --- 运动模糊：先叠半透明黑遮罩擦除残影，再叠加绘制粒子 ---
-    // 转场解体瞬间 / 爆破时降低擦除强度 => 拖尾更长
-    const burstingNow = (state === 1 || curBurst > 0.05 || material.uniforms.uIntroBurst.value > 0.05);
-    fadeMat.opacity = burstingNow ? 0.10 : 0.30;
-    renderer.render(fadeScene, fadeCamera);   // 半透明黑遮罩（不完全擦除）
-    renderer.render(scene, camera);           // 加法混合粒子叠加
+    renderer.render(scene, camera);
   }
   animate();
 
-  // ---------------------------------------------------------------------
-  // 自适应
-  // ---------------------------------------------------------------------
-  window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
+  addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    material.uniforms.uPixelRatio.value = Math.min(window.devicePixelRatio, 2);
+    renderer.setSize(innerWidth, innerHeight);
+    uniforms.uPixel.value = Math.min(devicePixelRatio, 2);
   });
 })();
 </script>
